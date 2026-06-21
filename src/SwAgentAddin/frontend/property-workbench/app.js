@@ -219,6 +219,21 @@
     });
     observer.observe(document.getElementById('app'), { childList: true, subtree: true });
     ensureWindowControls();
+    document.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      var topbar = e.target.closest('.topbar');
+      if (!topbar) return;
+      if (e.target.closest('.window-controls,button,input,select,textarea,a,[role="button"],.badge')) return;
+      e.preventDefault();
+      window.MechPilot.sendCommand('window_drag', {});
+    });
+    document.addEventListener('dblclick', function (e) {
+      var topbar = e.target.closest('.topbar');
+      if (!topbar) return;
+      if (e.target.closest('.window-controls,button,input,select,textarea,a,[role="button"],.badge')) return;
+      e.preventDefault();
+      window.MechPilot.sendCommand('window_maximize', {});
+    });
   }
 
   function ensureWindowControls() {

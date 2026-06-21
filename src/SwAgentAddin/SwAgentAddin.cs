@@ -2499,6 +2499,13 @@ namespace SwAgentAddin
         private readonly Func<string> _buildContext;
         private readonly Func<string, string> _handleCommand;
         private WebView2 _webView;
+        private Rectangle _normalBounds = Rectangle.Empty;
+
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
         public CockpitForm(AddinConfig config, Func<string> buildContext, Func<string, string> handleCommand)
         {
@@ -2509,8 +2516,12 @@ namespace SwAgentAddin
             Text = "MechPilot Agent驾驶舱";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
-            WindowState = FormWindowState.Maximized;
+            Size = new Size(1280, 800);
             MinimumSize = new Size(800, 500);
+            Padding = new Padding(6);
+            BackColor = Color.FromArgb(217, 221, 228);
+            _normalBounds = Bounds;
+            WindowState = FormWindowState.Maximized;
 
             // === WebView2 (fills remaining space) ===
             try
@@ -2540,10 +2551,20 @@ namespace SwAgentAddin
 
         // Let Windows treat the HTML top bar like a native title bar.
         private const int WM_NCHITTEST = 0x84;
+        private const int WM_NCLBUTTONDOWN = 0xA1;
         private const int HTCAPTION = 2;
         private const int HTCLIENT = 1;
+        private const int HTLEFT = 10;
+        private const int HTRIGHT = 11;
+        private const int HTTOP = 12;
+        private const int HTTOPLEFT = 13;
+        private const int HTTOPRIGHT = 14;
+        private const int HTBOTTOM = 15;
+        private const int HTBOTTOMLEFT = 16;
+        private const int HTBOTTOMRIGHT = 17;
         private const int DragTitleBarHeight = 44;
         private const int WindowControlsWidth = 144;
+        private const int ResizeGrip = 8;
 
         protected override void WndProc(ref Message m)
         {
@@ -2551,6 +2572,23 @@ namespace SwAgentAddin
             if (m.Msg == WM_NCHITTEST)
             {
                 var pos = PointToClient(Cursor.Position);
+                if (WindowState != FormWindowState.Maximized)
+                {
+                    bool left = pos.X >= 0 && pos.X < ResizeGrip;
+                    bool right = pos.X <= Width && pos.X > Width - ResizeGrip;
+                    bool top = pos.Y >= 0 && pos.Y < ResizeGrip;
+                    bool bottom = pos.Y <= Height && pos.Y > Height - ResizeGrip;
+
+                    if (left && top) { m.Result = (IntPtr)HTTOPLEFT; return; }
+                    if (right && top) { m.Result = (IntPtr)HTTOPRIGHT; return; }
+                    if (left && bottom) { m.Result = (IntPtr)HTBOTTOMLEFT; return; }
+                    if (right && bottom) { m.Result = (IntPtr)HTBOTTOMRIGHT; return; }
+                    if (left) { m.Result = (IntPtr)HTLEFT; return; }
+                    if (right) { m.Result = (IntPtr)HTRIGHT; return; }
+                    if (top) { m.Result = (IntPtr)HTTOP; return; }
+                    if (bottom) { m.Result = (IntPtr)HTBOTTOM; return; }
+                }
+
                 if (pos.Y >= 0 &&
                     pos.Y < DragTitleBarHeight &&
                     pos.X >= 0 &&
@@ -2639,10 +2677,13 @@ namespace SwAgentAddin
                 {
                     WindowState = FormWindowState.Minimized; return;
                 }
+                if (message.Contains("window_drag"))
+                {
+                    BeginNativeDrag(); return;
+                }
                 if (message.Contains("window_maximize"))
                 {
-                    WindowState = WindowState == FormWindowState.Maximized
-                        ? FormWindowState.Normal : FormWindowState.Maximized;
+                    ToggleMaximizeRestore();
                     return;
                 }
 
@@ -2660,6 +2701,38 @@ namespace SwAgentAddin
             {
                 SwAgentAddin.WriteTrace("CockpitForm: WebMessageReceived error: " + ex.Message);
             }
+        }
+
+        private void BeginNativeDrag()
+        {
+            if (WindowState == FormWindowState.Normal)
+                _normalBounds = Bounds;
+
+            ReleaseCapture();
+            SendMessage(Handle, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+        }
+
+        private void ToggleMaximizeRestore()
+        {
+            if (WindowState == FormWindowState.Maximized)
+            {
+                WindowState = FormWindowState.Normal;
+                if (_normalBounds.Width < MinimumSize.Width || _normalBounds.Height < MinimumSize.Height)
+                {
+                    Rectangle area = Screen.FromControl(this).WorkingArea;
+                    Size size = new Size(Math.Min(1280, area.Width - 80), Math.Min(800, area.Height - 80));
+                    _normalBounds = new Rectangle(
+                        area.Left + (area.Width - size.Width) / 2,
+                        area.Top + (area.Height - size.Height) / 2,
+                        size.Width,
+                        size.Height);
+                }
+                Bounds = _normalBounds;
+                return;
+            }
+
+            _normalBounds = Bounds;
+            WindowState = FormWindowState.Maximized;
         }
 
         /// <summary>
