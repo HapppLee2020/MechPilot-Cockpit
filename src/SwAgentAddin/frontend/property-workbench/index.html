@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MechPilot Agent驾驶舱</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 顶栏 -->
+    <div class="topbar" id="topbar"></div>
+
+    <!-- 工具栏 -->
+    <div class="toolbar" id="toolbar"></div>
+
+    <!-- 主内容区 -->
+    <div class="main">
+      <!-- 左侧：装配树 -->
+      <div class="tree-panel" id="tree-panel">
+        <div class="tree-panel-header">
+          <span>装配树</span>
+        </div>
+        <div class="tree-scroll" id="tree-scroll"></div>
+        <div class="resize-handle" id="resize-handle"></div>
+      </div>
+
+      <!-- 右侧：属性表 -->
+      <div class="table-panel">
+        <div class="table-scroll" id="table-scroll"></div>
+      </div>
+    </div>
+
+    <!-- 状态栏 -->
+    <div class="statusbar" id="statusbar"></div>
+  </div>
+
+  <!-- 筛选弹层容器 -->
+  <div id="filter-container"></div>
+
+  <!-- Mock 数据（生产环境由 WebView2 注入，不引入此文件） -->
+  <script src="mock-data.js"></script>
+  <!-- 主逻辑 -->
+  <script src="app.js"></script>
+</body>
+</html>

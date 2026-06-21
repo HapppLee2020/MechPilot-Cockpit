@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MechPilot — SolidWorks 2022 Add-in
+  .NET Framework 4.8 Class Library for SolidWorks 2022
+  构建: dotnet build（需设置 SW_HOME 环境变量）
+  输出: ..\..\deploy\（项目根 deploy 目录）
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>SwAgentAddin</RootNamespace>
+    <AssemblyName>SwAgentAddin</AssemblyName>
+
+    <Version>1.0.0</Version>
+    <Title>MechPilot Add-in</Title>
+    <Description>MechPilot — SolidWorks 智能辅助插件（瘦客户端）</Description>
+    <Company>Standard Hardware Dept</Company>
+
+    <!-- COM 注册：由 scripts/install.bat 通过 RegAsm 手动完成 -->
+    <RegisterForComInterop>false</RegisterForComInterop>
+
+    <!-- SW COM Interop: 禁止嵌入互操作类型 -->
+    <EmbedInteropTypes>false</EmbedInteropTypes>
+
+    <!-- 输出到项目根 deploy/ 目录 -->
+    <OutDir>$(MSBuildProjectDirectory)\..\..\deploy\</OutDir>
+    <IntermediateOutputPath>$(MSBuildProjectDirectory)\obj\$(Configuration)\</IntermediateOutputPath>
+
+    <!-- 强命名签名 -->
+    <AssemblyOriginatorKeyFile>SwAgentAddin.snk</AssemblyOriginatorKeyFile>
+    <SignAssembly>true</SignAssembly>
+
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SW 2022 COM Interop DLL — 引用本地 SW 安装目录 -->
+    <Reference Include="SolidWorks.Interop.sldworks">
+      <HintPath>$(SW_HOME)\SolidWorks.Interop.sldworks.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swconst">
+      <HintPath>$(SW_HOME)\SolidWorks.Interop.swconst.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swpublished">
+      <HintPath>$(SW_HOME)\SolidWorks.Interop.swpublished.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <!-- .NET Framework 基础类库 -->
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2535.41" />
+  </ItemGroup>
+
+  <!-- 部署资源：构建时复制到 OutDir（即项目根 deploy/） -->
+  <ItemGroup>
+    <!-- 前端 -->
+    <None Include="frontend\taskpane.html" CopyToOutputDirectory="Always" />
+    <None Include="frontend\cockpit-contracts\**\*.*" CopyToOutputDirectory="Always" />
+    <None Include="frontend\property-workbench\**\*.*" CopyToOutputDirectory="Always" />
+    <!-- 配置 -->
+    <None Include="config\config.json" CopyToOutputDirectory="Always" />
+    <None Include="config\rules.local.json" CopyToOutputDirectory="Always" />
+    <!-- 图标 -->
+    <None Include="assets\icons\mechpilot-main-20.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-main-32.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-icons-20.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-icons-32.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-icons-7-20.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-icons-7-32.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-icons-6-20.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-icons-6-32.bmp" CopyToOutputDirectory="Always" />
+    <!-- 部署脚本 -->
+    <None Include="scripts\*.bat" CopyToOutputDirectory="Always" />
+    <None Include="README.md" CopyToOutputDirectory="Always" />
+  </ItemGroup>
+
+</Project>

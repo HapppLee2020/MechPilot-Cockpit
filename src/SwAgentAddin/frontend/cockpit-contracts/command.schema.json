@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "mechpilot.cockpit.command.v1",
+  "title": "CockpitCommandEnvelope",
+  "description": "前端驾驶舱 → C# 宿主的命令信封。WebView2/WinForms 通过 JS→C# 桥接发送此 JSON，宿主反序列化后分发执行。",
+  "type": "object",
+  "required": ["command", "request_id"],
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "命令标识符",
+      "enum": ["property_fill", "property_check", "drawing_review", "read_properties", "refresh_context", "open_settings"]
+    },
+    "request_id": {
+      "type": "string",
+      "description": "前端生成的请求唯一 ID，用于结果关联"
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "parameters": {
+      "type": "object",
+      "description": "命令专属参数，不同 command 使用不同字段",
+      "properties": {
+        "target_file_path": {
+          "type": "string",
+          "description": "指定操作的目标文件路径（缺省使用活动文档）"
+        },
+        "component_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "装配体组件路径列表（多选写入时）"
+        },
+        "property_overrides": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "覆盖默认规则的属性键值对"
+        },
+        "filter": {
+          "type": "string",
+          "description": "属性过滤表达式（read_properties 命令用）"
+        }
+      }
+    }
+  },
+  "example": {
+    "command": "property_fill",
+    "request_id": "req-20260621-001",
+    "timestamp_utc": "2026-06-21T14:31:00Z",
+    "parameters": {
+      "property_overrides": {
+        "处理人": "davis",
+        "处理状态": "已审核"
+      }
+    }
+  }
+}

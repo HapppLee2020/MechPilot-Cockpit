@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "mechpilot.cockpit.result.v1",
+  "title": "CockpitResultEnvelope",
+  "description": "C# 宿主 → 前端驾驶舱的执行结果信封。每个 CockpitCommandEnvelope 执行后返回一个 ResultEnvelope。",
+  "type": "object",
+  "required": ["request_id", "success", "timestamp_utc"],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "description": "对应命令信封的 request_id"
+    },
+    "success": {
+      "type": "boolean",
+      "description": "执行是否成功"
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "error": {
+      "type": "object",
+      "description": "仅 success=false 时存在",
+      "properties": {
+        "code": { "type": "string", "description": "错误码，如 NO_DOCUMENT、COM_ERROR" },
+        "message": { "type": "string", "description": "人类可读错误描述" }
+      }
+    },
+    "data": {
+      "type": "object",
+      "description": "命令专属返回数据",
+      "properties": {
+        "updated_count": { "type": "integer", "description": "成功更新的目标数量" },
+        "failed_count": { "type": "integer", "description": "失败的目标数量" },
+        "changed_properties": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "变更的属性名列表"
+        },
+        "context": {
+          "description": "refresh_context 命令返回的完整 CockpitContext"
+        },
+        "messages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "详细消息列表"
+        }
+      }
+    }
+  },
+  "example": {
+    "request_id": "req-20260621-001",
+    "success": true,
+    "timestamp_utc": "2026-06-21T14:31:02Z",
+    "data": {
+      "updated_count": 1,
+      "failed_count": 0,
+      "changed_properties": ["处理人", "处理状态"],
+      "messages": ["bracket.SLDPRT: 2 properties updated"]
+    }
+  }
+}

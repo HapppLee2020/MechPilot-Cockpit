@@ -1,0 +1,136 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "mechpilot.cockpit.context.v1",
+  "title": "CockpitContext",
+  "description": "Agent驾驶舱上下文快照 — 由 C# 宿主序列化，前端 WebView2/WinForms 消费。包含当前文档、装配体树、属性表和插件能力声明。",
+  "type": "object",
+  "required": ["schema_version", "timestamp_utc", "client", "active_document"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "合同版本标识，格式 mechpilot.cockpit.context.vN",
+      "const": "mechpilot.cockpit.context.v1"
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "上下文生成时间（UTC ISO 8601）"
+    },
+    "client": {
+      "$ref": "#/definitions/CockpitClientInfo"
+    },
+    "active_document": {
+      "$ref": "#/definitions/CockpitDocumentInfo",
+      "description": "当前活动文档信息；无文档打开时为 null"
+    },
+    "selection": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/CockpitSelectionInfo" },
+      "description": "当前选中的实体列表"
+    },
+    "assembly_tree": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/CockpitTreeNode" },
+      "description": "装配体组件树（仅装配体文档时非空）"
+    },
+    "property_table": {
+      "$ref": "#/definitions/CockpitPropertyTable",
+      "description": "当前文档/选中实体的自定义属性表"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "宿主声明的能力列表，如 [\"read\", \"write\", \"check\", \"review\", \"cockpit\"]"
+    }
+  },
+  "definitions": {
+    "CockpitClientInfo": {
+      "type": "object",
+      "description": "宿主环境信息",
+      "properties": {
+        "engineer_id": { "type": "string", "description": "工程师 ID" },
+        "sw_version": { "type": "string", "description": "SolidWorks 版本号" },
+        "addin_version": { "type": "string", "description": "MechPilot 插件版本" },
+        "execution_mode": { "type": "string", "enum": ["local", "remote"], "description": "当前执行模式" },
+        "machine_name": { "type": "string", "description": "主机名" }
+      }
+    },
+    "CockpitDocumentInfo": {
+      "type": "object",
+      "description": "活动文档元数据",
+      "properties": {
+        "title": { "type": "string" },
+        "file_path": { "type": "string" },
+        "doc_type": { "type": "string", "enum": ["part", "assembly", "drawing"] },
+        "is_modified": { "type": "boolean" },
+        "custom_property_count": { "type": "integer" }
+      }
+    },
+    "CockpitSelectionInfo": {
+      "type": "object",
+      "description": "单个选中实体",
+      "properties": {
+        "index": { "type": "integer" },
+        "display_name": { "type": "string" },
+        "component_path": { "type": "string", "description": "装配体路径（仅组件选中时有值）" },
+        "doc_type": { "type": "string" }
+      }
+    },
+    "CockpitTreeNode": {
+      "type": "object",
+      "description": "装配体树节点",
+      "properties": {
+        "name": { "type": "string", "description": "零部件名称" },
+        "instance_count": { "type": "integer" },
+        "is_expanded": { "type": "boolean" },
+        "children": { "type": "array", "items": { "$ref": "#/definitions/CockpitTreeNode" } }
+      }
+    },
+    "CockpitPropertyTable": {
+      "type": "object",
+      "description": "属性表容器",
+      "properties": {
+        "target_label": { "type": "string", "description": "当前属性表对应的实体名称" },
+        "rows": { "type": "array", "items": { "$ref": "#/definitions/CockpitPropertyRow" } }
+      }
+    },
+    "CockpitPropertyRow": {
+      "type": "object",
+      "description": "单条自定义属性",
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "string" },
+        "raw_value": { "type": "string" },
+        "type": { "type": "integer", "description": "SW 属性类型枚举值" },
+        "source": { "type": "string", "enum": ["custom", "config", "inherited"] }
+      }
+    }
+  },
+  "example": {
+    "schema_version": "mechpilot.cockpit.context.v1",
+    "timestamp_utc": "2026-06-21T14:30:00Z",
+    "client": {
+      "engineer_id": "davis",
+      "sw_version": "2022 SP5.0",
+      "addin_version": "1.0.0",
+      "execution_mode": "local",
+      "machine_name": "DESKTOP-XYZ"
+    },
+    "active_document": {
+      "title": "bracket.SLDPRT",
+      "file_path": "D:\\Projects\\bracket.SLDPRT",
+      "doc_type": "part",
+      "is_modified": false,
+      "custom_property_count": 8
+    },
+    "selection": [],
+    "assembly_tree": [],
+    "property_table": {
+      "target_label": "bracket",
+      "rows": [
+        { "name": "物料名称", "value": "bracket", "raw_value": "bracket", "type": 30, "source": "custom" }
+      ]
+    },
+    "capabilities": ["read", "write", "check", "review", "cockpit"]
+  }
+}

@@ -1,0 +1,19 @@
+# Build output
+deploy/
+obj/
+bin/
+
+# IDE
+.vs/
+*.suo
+*.user
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+
+# Backup
+*.bak*

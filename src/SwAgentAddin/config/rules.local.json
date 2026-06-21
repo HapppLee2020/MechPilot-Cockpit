@@ -1,0 +1,29 @@
+{
+  "version": "demo-2026-06-21",
+  "property_sets": {
+    "part": {
+      "\u7269\u6599\u540d\u79f0": "{file_name_no_ext}",
+      "\u56fe\u53f7": "{file_name_no_ext}",
+      "\u6587\u6863\u7c7b\u578b": "{doc_type}",
+      "\u5904\u7406\u72b6\u6001": "MechPilot Local Demo",
+      "\u5904\u7406\u4eba": "{engineer_id}",
+      "\u5904\u7406\u65e5\u671f": "{date}"
+    },
+    "assembly": {
+      "\u88c5\u914d\u4f53\u540d\u79f0": "{file_name_no_ext}",
+      "\u56fe\u53f7": "{file_name_no_ext}",
+      "\u6587\u6863\u7c7b\u578b": "{doc_type}",
+      "\u5904\u7406\u72b6\u6001": "MechPilot Local Demo",
+      "\u5904\u7406\u4eba": "{engineer_id}",
+      "\u5904\u7406\u65e5\u671f": "{date}"
+    },
+    "drawing": {
+      "\u56fe\u7eb8\u540d\u79f0": "{file_name_no_ext}",
+      "\u56fe\u53f7": "{file_name_no_ext}",
+      "\u6587\u6863\u7c7b\u578b": "{doc_type}",
+      "\u5904\u7406\u72b6\u6001": "MechPilot Local Demo",
+      "\u5904\u7406\u4eba": "{engineer_id}",
+      "\u5904\u7406\u65e5\u671f": "{date}"
+    }
+  }
+}
