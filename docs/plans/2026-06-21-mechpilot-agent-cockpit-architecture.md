@@ -191,6 +191,33 @@ The first WebView2 cockpit must demonstrate:
 - Tree and table selection can link through `node_id` / `row_id`.
 - Existing WinForms `读取属性` remains available as fallback.
 
+## Cockpit Overview Must Be Component-Centric
+
+The cockpit overview is not a generic dashboard. For SolidWorks users, the most important operating object is always the current part/component/assembly node. Therefore the overview page must use the design tree / assembly tree as its primary view.
+
+Required overview behavior:
+
+- Render the current document design tree by default.
+- Expand the root node and first-level subassemblies by default.
+- Show part and subassembly nodes with document name, document type, quantity, suppressed/lightweight state, and warning/property status when available.
+- Keep a shared selected component state across overview, property, BOM, and AI assistant views.
+- When a tree node is selected, update the component summary panel immediately.
+- The summary panel should show component name, document type, quantity, file path, file size, key properties, and available actions.
+- AI assistant messages should include the currently selected component context.
+
+Recommended layout:
+
+```text
+Overview
+├─ Left: design tree / assembly tree
+├─ Center: selected component summary and key properties
+└─ Right or bottom: quick actions
+   ├─ read properties
+   ├─ check properties
+   ├─ locate in BOM
+   └─ send to AI assistant
+```
+
 ## Multi-Agent Execution
 
 Use these task files:

@@ -11,24 +11,46 @@
     <!-- 顶栏 -->
     <div class="topbar" id="topbar"></div>
 
-    <!-- 工具栏 -->
-    <div class="toolbar" id="toolbar"></div>
-
-    <!-- 主内容区 -->
-    <div class="main">
-      <!-- 左侧：装配树 -->
-      <div class="tree-panel" id="tree-panel">
-        <div class="tree-panel-header">
-          <span>装配树</span>
+    <!-- 中间区：Sidebar + 主内容 + AI面板 -->
+    <div class="workspace" id="workspace">
+      <!-- 左侧 Sidebar -->
+      <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-logo">AICockpit</span>
         </div>
-        <div class="tree-scroll" id="tree-scroll"></div>
-        <div class="resize-handle" id="resize-handle"></div>
-      </div>
+        <ul class="sidebar-nav" id="sidebar-nav">
+          <li data-page="overview"><span class="nav-icon">&#x1F4CA;</span><span class="nav-label">总览</span></li>
+          <li data-page="assistant"><span class="nav-icon">&#x1F916;</span><span class="nav-label">AI助手</span></li>
+          <li data-page="drawing"><span class="nav-icon">&#x1F4D0;</span><span class="nav-label">图纸审核</span></li>
+          <li data-page="selection"><span class="nav-icon">&#x2699;</span><span class="nav-label">快速选型</span></li>
+          <li data-page="material"><span class="nav-icon">&#x1F4E6;</span><span class="nav-label">物料检索</span></li>
+          <li data-page="design"><span class="nav-icon">&#x1F4CF;</span><span class="nav-label">设计计算</span></li>
+          <li data-page="agent"><span class="nav-icon">&#x1F4BC;</span><span class="nav-label">Agent任务</span></li>
+          <li data-page="settings"><span class="nav-icon">&#x1F527;</span><span class="nav-label">设置</span></li>
+        </ul>
+        <div class="sidebar-footer">
+          <span id="sidebar-status-dot" class="dot"></span>
+          <span id="sidebar-status-text">就绪</span>
+        </div>
+      </nav>
 
-      <!-- 右侧：属性表 -->
-      <div class="table-panel">
-        <div class="table-scroll" id="table-scroll"></div>
-      </div>
+      <!-- 主内容区 -->
+      <main class="page-container" id="page-container"></main>
+
+      <!-- 右侧 AI 面板 -->
+      <aside class="ai-panel" id="ai-panel">
+        <div class="ai-panel-header">
+          <span class="ai-panel-title">AI 对话</span>
+          <button class="ai-panel-toggle" id="ai-panel-toggle" title="收起">&#x25B6;</button>
+        </div>
+        <div class="ai-panel-body">
+          <div class="ai-messages" id="ai-messages"></div>
+          <div class="ai-input-area">
+            <textarea id="ai-input" placeholder="输入消息…" rows="2"></textarea>
+            <button id="ai-send" title="发送">&#x27A4;</button>
+          </div>
+        </div>
+      </aside>
     </div>
 
     <!-- 状态栏 -->

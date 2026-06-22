@@ -14,14 +14,14 @@
   "remote_status_endpoint_template": "/api/v1/task/{task_id}",
   "remote_result_endpoint_template": "/api/v1/task/{task_id}/result",
   "read_property_names": [
-    "\u7269\u6599\u540d\u79f0",
-    "\u56fe\u53f7",
-    "\u6750\u6599",
-    "\u91cd\u91cf",
-    "\u8868\u9762\u5904\u7406",
-    "\u5904\u7406\u72b6\u6001",
-    "\u5904\u7406\u4eba",
-    "\u5904\u7406\u65e5\u671f"
+    "物料名称",
+    "图号",
+    "材料",
+    "重量",
+    "表面处理",
+    "处理状态",
+    "处理人",
+    "处理日期"
   ],
   "read_show_all_properties": false,
   "read_show_raw_value_default": false,
@@ -36,5 +36,30 @@
   "cockpit_dev_url": "http://127.0.0.1:5173",
   "cockpit_prefer_webview2": true,
   "cockpit_fallback_to_winforms": true,
-  "cockpit_schema_version": "mechpilot.cockpit.context.v1"
+  "cockpit_schema_version": "mechpilot.cockpit.context.v1",
+  "agent_server": {
+    "provider": "hermes",
+    "base_url": "http://127.0.0.1:8080",
+    "auth_mode": "none",
+    "api_key": "",
+    "task_endpoint": "/api/v1/task",
+    "status_endpoint_template": "/api/v1/task/{task_id}",
+    "result_endpoint_template": "/api/v1/task/{task_id}/result",
+    "stream_endpoint_template": "/api/v1/task/{task_id}/stream",
+    "invoke_endpoint": "/api/v1/agent/invoke",
+    "timeout_seconds": 120,
+    "poll_interval_seconds": 3,
+    "context_mode_default": "summary"
+  },
+  "hindsight": {
+    "enabled": true,
+    "base_url": "http://192.168.31.115:8888",
+    "api_key": "",
+    "bank": "davis",
+    "source_db_path": "D:\\SWAgentAddin\\rag\\materials.sqlite.db",
+    "top_k": 5,
+    "score_threshold": 0.35,
+    "timeout_seconds": 30,
+    "explain_with_hermes": false
+  }
 }

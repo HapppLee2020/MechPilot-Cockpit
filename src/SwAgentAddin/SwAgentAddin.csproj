@@ -73,15 +73,16 @@
     <!-- 配置 -->
     <None Include="config\config.json" CopyToOutputDirectory="Always" />
     <None Include="config\rules.local.json" CopyToOutputDirectory="Always" />
-    <!-- 图标 -->
-    <None Include="assets\icons\mechpilot-main-20.bmp" CopyToOutputDirectory="Always" />
-    <None Include="assets\icons\mechpilot-main-32.bmp" CopyToOutputDirectory="Always" />
-    <None Include="assets\icons\mechpilot-icons-20.bmp" CopyToOutputDirectory="Always" />
-    <None Include="assets\icons\mechpilot-icons-32.bmp" CopyToOutputDirectory="Always" />
-    <None Include="assets\icons\mechpilot-icons-7-20.bmp" CopyToOutputDirectory="Always" />
-    <None Include="assets\icons\mechpilot-icons-7-32.bmp" CopyToOutputDirectory="Always" />
-    <None Include="assets\icons\mechpilot-icons-6-20.bmp" CopyToOutputDirectory="Always" />
-    <None Include="assets\icons\mechpilot-icons-6-32.bmp" CopyToOutputDirectory="Always" />
+    <!-- 图标（Ribbon 风格 — 首选） -->
+    <None Include="assets\icons\mechpilot-ribbon-main-20.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-ribbon-main-32.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-ribbon-icons-16-20.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-ribbon-icons-16-32.bmp" CopyToOutputDirectory="Always" />
+    <!-- 图标（蓝图风格 — 备选） -->
+    <None Include="assets\icons\mechpilot-blueprint-main-20.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-blueprint-main-32.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-blueprint-icons-16-20.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-blueprint-icons-16-32.bmp" CopyToOutputDirectory="Always" />
     <!-- 部署脚本 -->
     <None Include="scripts\*.bat" CopyToOutputDirectory="Always" />
     <None Include="README.md" CopyToOutputDirectory="Always" />

@@ -36,14 +36,26 @@ namespace SwAgentAddin
         private const int CommandGroupId = 1001;
         private const int FirstMenuId = 0;
 
-        // Command IDs — must match ImageListIndex in 7-icon strip
+        // Command IDs — must match ImageListIndex in 16-icon ribbon strip
+        // AI 工具区 (0-5)
         private const int CmdCockpit = 0;
-        private const int CmdPropertyFill = 1;
-        private const int CmdReadProperties = 2;
-        private const int CmdPropertyCheck = 3;
-        private const int CmdDrawingReview = 4;
-        private const int CmdShowPanel = 5;
-        private const int CmdSettings = 6;
+        private const int CmdAIAssistant = 1;
+        private const int CmdAIDrawingReview = 2;
+        private const int CmdAISelection = 3;
+        private const int CmdMaterialSearch = 4;
+        private const int CmdDesignCalc = 5;
+        // 本地工程工具区 (6-12)
+        private const int CmdPropertyFill = 6;
+        private const int CmdReadProperties = 7;
+        private const int CmdPropertyCheck = 8;
+        private const int CmdBomExport = 9;
+        private const int CmdBatchConvert = 10;
+        private const int CmdDrawingExport = 11;
+        private const int CmdPackageBackup = 12;
+        // 系统区 (13-15)
+        private const int CmdSettings = 13;
+        private const int CmdRulesConfig = 14;
+        private const int CmdAbout = 15;
 
         #endregion
 
@@ -56,6 +68,10 @@ namespace SwAgentAddin
         private LocalPropertyRules _rules;
         private int _addinCookie;
         private readonly HttpClient _httpClient = new HttpClient();
+
+        // ActionRouter / LocalToolbeltExecutor
+        private ActionRouter _actionRouter;
+        private LocalToolbeltExecutor _localExecutor;
 
         // Document event handlers
         private Hashtable _openDocuments;
@@ -89,6 +105,7 @@ namespace SwAgentAddin
 
                 LoadConfig();
                 LoadRules();
+                InitActionRouter();
                 AddCommandMgr();
                 AddTaskPane();
 
@@ -164,46 +181,29 @@ namespace SwAgentAddin
                 (int)swDocTemplateTypes_e.swDocTemplateTypeASSEMBLY |
                 (int)swDocTemplateTypes_e.swDocTemplateTypeDRAWING;
 
-            cmdGroup.AddCommandItem2("Agent驾驶舱", -1,
-                "打开 Agent 驾驶舱", "Agent驾驶舱",
-                0, "SwCmd_Cockpit", "", CmdCockpit,
-                (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem);
+            int addItem = (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem;
 
-            cmdGroup.AddCommandItem2(
-                "属性填写",       // Name
-                -1,                     // Position
-                "按当前模式填写自定义属性",  // HintString
-                "属性填写",       // ToolTip
-                1,                      // ImageListIndex
-                "SwCmd_PropertyFill",  // CallbackFunction
-                "",                     // EnableMethod (empty = always enabled)
-                CmdPropertyFill,       // UserID
-                (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem);
+            // ── AI 工具区 (index 0-5) ──
+            cmdGroup.AddCommandItem2("驾驶舱", -1, "打开 AICockpit 总览", "驾驶舱", CmdCockpit, "SwCmd_Cockpit", "", CmdCockpit, addItem);
+            cmdGroup.AddCommandItem2("AI助手", -1, "打开 AICockpit 并展开 AI 面板", "AI助手", CmdAIAssistant, "SwCmd_AIAssistant", "", CmdAIAssistant, addItem);
+            cmdGroup.AddCommandItem2("图纸审核", -1, "打开 AICockpit 图纸审核页面", "图纸审核", CmdAIDrawingReview, "SwCmd_AIDrawingReview", "", CmdAIDrawingReview, addItem);
+            cmdGroup.AddCommandItem2("快速选型", -1, "打开 AICockpit 快速选型页面", "快速选型", CmdAISelection, "SwCmd_AISelection", "", CmdAISelection, addItem);
+            cmdGroup.AddCommandItem2("物料检索", -1, "打开 AICockpit 物料检索页面", "物料检索", CmdMaterialSearch, "SwCmd_MaterialSearch", "", CmdMaterialSearch, addItem);
+            cmdGroup.AddCommandItem2("设计计算", -1, "打开 AICockpit 设计计算页面", "设计计算", CmdDesignCalc, "SwCmd_DesignCalc", "", CmdDesignCalc, addItem);
 
-            cmdGroup.AddCommandItem2("读取属性", -1,
-                "读取当前文档自定义属性", "读取属性",
-                2, "SwCmd_ReadProperties", "", CmdReadProperties,
-                (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem);
+            // ── 本地工程工具区 (index 6-12) ──
+            cmdGroup.AddCommandItem2("属性填写", -1, "按当前模式填写自定义属性", "属性填写", CmdPropertyFill, "SwCmd_PropertyFill", "", CmdPropertyFill, addItem);
+            cmdGroup.AddCommandItem2("读取属性", -1, "读取当前文档自定义属性", "读取属性", CmdReadProperties, "SwCmd_ReadProperties", "", CmdReadProperties, addItem);
+            cmdGroup.AddCommandItem2("属性检查", -1, "检查当前模型自定义属性", "属性检查", CmdPropertyCheck, "SwCmd_PropertyCheck", "", CmdPropertyCheck, addItem);
+            cmdGroup.AddCommandItem2("BOM导出", -1, "导出物料清单", "BOM导出", CmdBomExport, "SwCmd_BomExport", "", CmdBomExport, addItem);
+            cmdGroup.AddCommandItem2("批量转换", -1, "批量转换文档格式", "批量转换", CmdBatchConvert, "SwCmd_BatchConvert", "", CmdBatchConvert, addItem);
+            cmdGroup.AddCommandItem2("图纸导出", -1, "导出工程图为 PDF/DWG", "图纸导出", CmdDrawingExport, "SwCmd_DrawingExport", "", CmdDrawingExport, addItem);
+            cmdGroup.AddCommandItem2("打包备份", -1, "打包备份当前工程", "打包备份", CmdPackageBackup, "SwCmd_PackageBackup", "", CmdPackageBackup, addItem);
 
-            cmdGroup.AddCommandItem2("属性检查", -1,
-                "检查当前模型自定义属性", "属性检查",
-                3, "SwCmd_PropertyCheck", "", CmdPropertyCheck,
-                (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem);
-
-            cmdGroup.AddCommandItem2("图纸审核", -1,
-                "提交当前工程图审核", "图纸审核",
-                4, "SwCmd_DrawingReview", "", CmdDrawingReview,
-                (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem);
-
-            cmdGroup.AddCommandItem2("任务面板", -1,
-                "打开 MechPilot 任务面板", "任务面板",
-                5, "SwCmd_ShowPanel", "", CmdShowPanel,
-                (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem);
-
-            cmdGroup.AddCommandItem2("插件设置", -1,
-                "打开配置文件", "插件设置",
-                6, "SwCmd_Settings", "", CmdSettings,
-                (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem);
+            // ── 系统区 (index 13-15) ──
+            cmdGroup.AddCommandItem2("插件设置", -1, "打开插件配置文件", "插件设置", CmdSettings, "SwCmd_Settings", "", CmdSettings, addItem);
+            cmdGroup.AddCommandItem2("规则配置", -1, "打开规则配置文件", "规则配置", CmdRulesConfig, "SwCmd_RulesConfig", "", CmdRulesConfig, addItem);
+            cmdGroup.AddCommandItem2("关于", -1, "查看版本与部署信息", "关于", CmdAbout, "SwCmd_About", "", CmdAbout, addItem);
 
             cmdGroup.HasMenu = true;
             cmdGroup.HasToolbar = true;
@@ -218,11 +218,20 @@ namespace SwAgentAddin
             try
             {
                 string dir = GetAddinDirectory();
-                cmdGroup.SmallMainIcon = Path.Combine(dir, "assets/icons/mechpilot-main-20.bmp");
-                cmdGroup.LargeMainIcon = Path.Combine(dir, "assets/icons/mechpilot-main-32.bmp");
-                cmdGroup.SmallIconList = Path.Combine(dir, "assets/icons/mechpilot-icons-7-20.bmp");
-                cmdGroup.LargeIconList = Path.Combine(dir, "assets/icons/mechpilot-icons-7-32.bmp");
-                WriteTrace("ApplyCommandGroupIcons: icons assigned.");
+                // Ribbon 风格优先，蓝图备选
+                string sm20 = File.Exists(Path.Combine(dir, "assets/icons/mechpilot-ribbon-main-20.bmp"))
+                    ? "assets/icons/mechpilot-ribbon-main-20.bmp" : "assets/icons/mechpilot-blueprint-main-20.bmp";
+                string lg32 = File.Exists(Path.Combine(dir, "assets/icons/mechpilot-ribbon-main-32.bmp"))
+                    ? "assets/icons/mechpilot-ribbon-main-32.bmp" : "assets/icons/mechpilot-blueprint-main-32.bmp";
+                string si20 = File.Exists(Path.Combine(dir, "assets/icons/mechpilot-ribbon-icons-16-20.bmp"))
+                    ? "assets/icons/mechpilot-ribbon-icons-16-20.bmp" : "assets/icons/mechpilot-blueprint-icons-16-20.bmp";
+                string li32 = File.Exists(Path.Combine(dir, "assets/icons/mechpilot-ribbon-icons-16-32.bmp"))
+                    ? "assets/icons/mechpilot-ribbon-icons-16-32.bmp" : "assets/icons/mechpilot-blueprint-icons-16-32.bmp";
+                cmdGroup.SmallMainIcon = Path.Combine(dir, sm20);
+                cmdGroup.LargeMainIcon = Path.Combine(dir, lg32);
+                cmdGroup.SmallIconList = Path.Combine(dir, si20);
+                cmdGroup.LargeIconList = Path.Combine(dir, li32);
+                WriteTrace("ApplyCommandGroupIcons: ribbon icons assigned (fallback to blueprint if missing).");
             }
             catch (Exception ex)
             {
@@ -238,6 +247,8 @@ namespace SwAgentAddin
                 (int)swDocumentTypes_e.swDocASSEMBLY,
                 (int)swDocumentTypes_e.swDocDRAWING
             };
+
+            int textBelow = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow;
 
             foreach (int docType in docTypes)
             {
@@ -257,39 +268,55 @@ namespace SwAgentAddin
                         continue;
                     }
 
-                    CommandTabBox box = tab.AddCommandTabBox();
-                    if (box == null)
+                    // ── Box 1: AI 工具区 (6 buttons) ──
+                    CommandTabBox boxAI = tab.AddCommandTabBox();
+                    if (boxAI != null)
                     {
-                        WriteTrace("AddCommandTabs: AddCommandTabBox returned null. docType=" + docType);
-                        continue;
+                        int[] aiIds = {
+                            cmdGroup.get_CommandID(CmdCockpit),
+                            cmdGroup.get_CommandID(CmdAIAssistant),
+                            cmdGroup.get_CommandID(CmdAIDrawingReview),
+                            cmdGroup.get_CommandID(CmdAISelection),
+                            cmdGroup.get_CommandID(CmdMaterialSearch),
+                            cmdGroup.get_CommandID(CmdDesignCalc)
+                        };
+                        int[] aiStyles = { textBelow, textBelow, textBelow, textBelow, textBelow, textBelow };
+                        boxAI.AddCommands(aiIds, aiStyles);
                     }
 
-                    int[] commandIds =
+                    // ── Box 2: 本地工程工具区 (7 buttons) ──
+                    CommandTabBox boxLocal = tab.AddCommandTabBox();
+                    if (boxLocal != null)
                     {
-                        cmdGroup.get_CommandID(CmdCockpit),
-                        cmdGroup.get_CommandID(CmdPropertyFill),
-                        cmdGroup.get_CommandID(CmdReadProperties),
-                        cmdGroup.get_CommandID(CmdPropertyCheck),
-                        cmdGroup.get_CommandID(CmdDrawingReview),
-                        cmdGroup.get_CommandID(CmdShowPanel),
-                        cmdGroup.get_CommandID(CmdSettings)
-                    };
+                        int[] localIds = {
+                            cmdGroup.get_CommandID(CmdPropertyFill),
+                            cmdGroup.get_CommandID(CmdReadProperties),
+                            cmdGroup.get_CommandID(CmdPropertyCheck),
+                            cmdGroup.get_CommandID(CmdBomExport),
+                            cmdGroup.get_CommandID(CmdBatchConvert),
+                            cmdGroup.get_CommandID(CmdDrawingExport),
+                            cmdGroup.get_CommandID(CmdPackageBackup)
+                        };
+                        int[] localStyles = { textBelow, textBelow, textBelow, textBelow, textBelow, textBelow, textBelow };
+                        boxLocal.AddCommands(localIds, localStyles);
+                    }
 
-                    int[] textStyles =
+                    // ── Box 3: 系统区 (3 buttons) ──
+                    CommandTabBox boxSys = tab.AddCommandTabBox();
+                    if (boxSys != null)
                     {
-                        (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow,
-                        (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow,
-                        (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow,
-                        (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow,
-                        (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow,
-                        (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow,
-                        (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow
-                    };
+                        int[] sysIds = {
+                            cmdGroup.get_CommandID(CmdSettings),
+                            cmdGroup.get_CommandID(CmdRulesConfig),
+                            cmdGroup.get_CommandID(CmdAbout)
+                        };
+                        int[] sysStyles = { textBelow, textBelow, textBelow };
+                        boxSys.AddCommands(sysIds, sysStyles);
+                    }
 
-                    bool added = box.AddCommands(commandIds, textStyles);
                     tab.Visible = true;
                     tab.Active = true;
-                    WriteTrace("AddCommandTabs: built. docType=" + docType + ", added=" + added + ", ids=" + string.Join(",", commandIds));
+                    WriteTrace("AddCommandTabs: 3-zone built. docType=" + docType);
                 }
                 catch (Exception ex)
                 {
@@ -301,11 +328,18 @@ namespace SwAgentAddin
         private static void EnsureIconFiles()
         {
             string dir = GetAddinDirectory();
-            string[] required = { "assets/icons/mechpilot-main-20.bmp", "assets/icons/mechpilot-main-32.bmp", "assets/icons/mechpilot-icons-7-20.bmp", "assets/icons/mechpilot-icons-7-32.bmp" };
-            foreach (string f in required)
+            // Ribbon 首选 + 蓝图备选，任一存在即可
+            string[][] pairs =
             {
-                if (!File.Exists(Path.Combine(dir, f)))
-                    WriteTrace("WARNING: icon file missing: " + f + " — toolbar icons may not display.");
+                new[] { "assets/icons/mechpilot-ribbon-main-20.bmp", "assets/icons/mechpilot-blueprint-main-20.bmp" },
+                new[] { "assets/icons/mechpilot-ribbon-main-32.bmp", "assets/icons/mechpilot-blueprint-main-32.bmp" },
+                new[] { "assets/icons/mechpilot-ribbon-icons-16-20.bmp", "assets/icons/mechpilot-blueprint-icons-16-20.bmp" },
+                new[] { "assets/icons/mechpilot-ribbon-icons-16-32.bmp", "assets/icons/mechpilot-blueprint-icons-16-32.bmp" }
+            };
+            foreach (var pair in pairs)
+            {
+                if (!File.Exists(Path.Combine(dir, pair[0])) && !File.Exists(Path.Combine(dir, pair[1])))
+                    WriteTrace("WARNING: icon file missing: " + pair[0] + " / " + pair[1] + " — toolbar icons may not display.");
             }
         }
 
@@ -581,16 +615,6 @@ namespace SwAgentAddin
             ExecuteTask("property_check", "Property Check");
         }
 
-        public void SwCmd_DrawingReview()
-        {
-            ExecuteTask("drawing_review", "Drawing Review");
-        }
-
-        public void SwCmd_ShowPanel()
-        {
-            ShowTaskPane();
-        }
-
         public void SwCmd_Settings()
         {
             OpenConfigFile();
@@ -599,6 +623,188 @@ namespace SwAgentAddin
         public void SwCmd_ReadProperties()
         {
             ExecuteReadProperties();
+        }
+
+        // ── AI 工具区回调 ──
+
+        public void SwCmd_AIAssistant()
+        {
+            OpenCockpitPage("ai-assistant");
+        }
+
+        public void SwCmd_AIDrawingReview()
+        {
+            OpenCockpitPage("drawing-review");
+        }
+
+        public void SwCmd_AISelection()
+        {
+            OpenCockpitPage("selection");
+        }
+
+        public void SwCmd_MaterialSearch()
+        {
+            OpenCockpitPage("material-search");
+        }
+
+        public void SwCmd_DesignCalc()
+        {
+            OpenCockpitPage("design-calc");
+        }
+
+        // ── 本地工程工具区回调 ──
+
+        public void SwCmd_BomExport()
+        {
+            ExecuteLocalTool("bom", "export", "BOM导出");
+        }
+
+        public void SwCmd_BatchConvert()
+        {
+            ExecuteLocalTool("file", "convert", "批量转换");
+        }
+
+        public void SwCmd_DrawingExport()
+        {
+            ExecuteLocalTool("drawing", "export", "图纸导出");
+        }
+
+        public void SwCmd_PackageBackup()
+        {
+            ExecuteLocalTool("package", "backup", "打包备份");
+        }
+
+        // ── 系统区回调 ──
+
+        public void SwCmd_RulesConfig()
+        {
+            string rulesPath = Path.Combine(GetAddinDirectory(), "config/rules.local.json");
+            try
+            {
+                if (!File.Exists(rulesPath))
+                {
+                    SafeMessage("规则文件不存在：\n" + rulesPath, MessageBoxIcon.Warning);
+                    return;
+                }
+                Process.Start(rulesPath);
+            }
+            catch
+            {
+                SafeMessage("规则配置文件：\n" + rulesPath, MessageBoxIcon.Information);
+            }
+        }
+
+        public void SwCmd_About()
+        {
+            string addinDir = GetAddinDirectory();
+            string logPath = Path.Combine(addinDir, "addin-load.log");
+            string ver = typeof(SwAgentAddin).Assembly.GetName().Version.ToString();
+            SafeMessage(
+                "MechPilot v" + ver + "\n" +
+                "SolidWorks 2022 Add-in\n" +
+                "双核心架构: AIPilot / LocalToolbelt\n\n" +
+                "部署目录: " + addinDir + "\n" +
+                "日志文件: " + logPath + "\n" +
+                "执行模式: " + (_config?.ExecutionMode ?? "local") + "\n" +
+                "工程师ID: " + (_config?.EngineerId ?? ""),
+                MessageBoxIcon.Information);
+        }
+
+        /// <summary>
+        /// 打开 AICockpit 并导航到指定页面
+        /// </summary>
+        private void OpenCockpitPage(string page)
+        {
+            try
+            {
+                if (!_config.CockpitEnabled)
+                {
+                    SafeMessage("AICockpit 已在配置中禁用。", MessageBoxIcon.Information);
+                    return;
+                }
+
+                if (_cockpitForm != null && !_cockpitForm.IsDisposed)
+                {
+                    _cockpitForm.BringToFront();
+                    _cockpitForm.WindowState = FormWindowState.Maximized;
+                    return;
+                }
+
+                _cockpitForm = new CockpitForm(_config, BuildCockpitContext, HandleCockpitCommand);
+                _cockpitForm.FormClosed += (s, e) => { _cockpitForm = null; };
+                _cockpitForm.Show();
+                WriteTrace("OpenCockpitPage: " + page);
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("OpenCockpitPage exception (" + page + "): " + ex);
+                if (ex.Message.Contains("WebView2") || (ex.InnerException != null && ex.InnerException.Message.Contains("WebView2")))
+                {
+                    SafeMessage(
+                        "WebView2 运行时未安装。\n\n" +
+                        "AICockpit 需要 Microsoft WebView2 Runtime。\n" +
+                        "请从 https://developer.microsoft.com/en-us/microsoft-edge/webview2/ 下载安装后重试。",
+                        MessageBoxIcon.Warning);
+                }
+                else
+                {
+                    SafeMessage("AICockpit 打开失败：" + ex.Message, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 本地工具统一入口 — 通过 ActionRouter 或直接调用 LocalToolbeltExecutor
+        /// </summary>
+        private void ExecuteLocalTool(string feature, string action, string displayName)
+        {
+            try
+            {
+                if (_actionRouter != null)
+                {
+                    var cmd = new MechPilotCommand
+                    {
+                        CommandId = "cmd-" + Guid.NewGuid().ToString("N").Substring(0, 8),
+                        Source = "toolbar",
+                        Feature = feature,
+                        Action = action,
+                        Executor = "local"
+                    };
+                    string resultJson = _actionRouter.HandleCommand(cmd.ToJson());
+                    WriteTrace("ExecuteLocalTool " + feature + "." + action + ": " + resultJson);
+                    SafeMessage(displayName + " 已执行。详情请查看日志。", MessageBoxIcon.Information);
+                }
+                else if (_localExecutor != null)
+                {
+                    var cmd = new MechPilotCommand
+                    {
+                        CommandId = "cmd-" + Guid.NewGuid().ToString("N").Substring(0, 8),
+                        Source = "toolbar",
+                        Feature = feature,
+                        Action = action,
+                        Executor = "local"
+                    };
+                    MechPilotResult result = null;
+                    switch (feature)
+                    {
+                        case "bom": result = _localExecutor.BomExport(cmd); break;
+                        case "file": result = _localExecutor.BatchConvert(cmd); break;
+                        case "drawing": result = _localExecutor.DrawingExport(cmd); break;
+                        case "package": result = _localExecutor.PackageBackup(cmd); break;
+                        default: result = new MechPilotResult { Ok = false, Message = "未知功能: " + feature }; break;
+                    }
+                    SafeMessage(result?.Message ?? displayName + " 执行完成", result?.Ok == true ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                }
+                else
+                {
+                    SafeMessage(displayName + "：执行器未就绪，请重新加载插件。", MessageBoxIcon.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("ExecuteLocalTool error (" + feature + "." + action + "): " + ex);
+                SafeMessage(displayName + " 执行失败：" + ex.Message, MessageBoxIcon.Error);
+            }
         }
 
         /// <summary>
@@ -650,8 +856,23 @@ namespace SwAgentAddin
                         return MakeCockpitResult(requestId, true, null, null, new Dictionary<string, object> { ["action"] = "maximize" });
 
                     default:
+                        // 通过 ActionRouter 路由 AI/Agent 命令
+                        if (_actionRouter != null)
+                        {
+                            try
+                            {
+                                string routed = _actionRouter.HandleCommand(commandJson);
+                                WriteTrace("HandleCockpitCommand routed via ActionRouter: " + command);
+                                return routed;
+                            }
+                            catch (Exception routeEx)
+                            {
+                                WriteTrace("ActionRouter error for " + command + ": " + routeEx);
+                                return MakeCockpitResult(requestId, false, "ROUTER_ERROR", "命令路由失败: " + routeEx.Message);
+                            }
+                        }
                         return MakeCockpitResult(requestId, false, "UNKNOWN_COMMAND",
-                            "未实现的命令: " + command + "。当前支持: cockpit.ping, local.read_properties, refresh_context");
+                            "未实现的命令: " + command + "。ActionRouter 未初始化。");
                 }
             }
             catch (Exception ex)
@@ -1787,6 +2008,20 @@ namespace SwAgentAddin
             }
         }
 
+        private void InitActionRouter()
+        {
+            try
+            {
+                _localExecutor = new LocalToolbeltExecutor(_swApp, _config);
+                _actionRouter = new ActionRouter(_swApp, _config, _rules, BuildCockpitContext, (taskType, displayName) => ExecuteLocalTask(taskType, displayName));
+                WriteTrace("InitActionRouter initialized.");
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("InitActionRouter error: " + ex);
+            }
+        }
+
         #endregion
 
         #region Utility
@@ -2917,6 +3152,12 @@ namespace SwAgentAddin
         public bool CockpitFallbackToWinforms { get; set; } = true;
         public string CockpitSchemaVersion { get; set; } = "mechpilot.cockpit.context.v1";
 
+        // Agent Server / Hermes (Agent S)
+        public AgentServerConfig AgentServer { get; set; } = new AgentServerConfig();
+
+        // Hindsight RAG
+        public HindsightConfig Hindsight { get; set; } = new HindsightConfig();
+
         public static AddinConfig Defaults() => new AddinConfig();
 
         public static AddinConfig FromJson(string json)
@@ -3008,6 +3249,22 @@ namespace SwAgentAddin
             if (dict.ContainsKey("cockpit_schema_version"))
                 config.CockpitSchemaVersion = Convert.ToString(dict["cockpit_schema_version"]);
 
+            // Agent Server (Hermes)
+            if (dict.ContainsKey("agent_server"))
+            {
+                var agentServerDict = dict["agent_server"] as Dictionary<string, object>;
+                if (agentServerDict != null)
+                    config.AgentServer = AgentServerConfig.FromJson(agentServerDict);
+            }
+
+            // Hindsight RAG
+            if (dict.ContainsKey("hindsight"))
+            {
+                var hindsightDict = dict["hindsight"] as Dictionary<string, object>;
+                if (hindsightDict != null)
+                    config.Hindsight = HindsightConfig.FromJson(hindsightDict);
+            }
+
             return config;
         }
 
@@ -3048,6 +3305,12 @@ namespace SwAgentAddin
             dict["cockpit_prefer_webview2"] = CockpitPreferWebview2;
             dict["cockpit_fallback_to_winforms"] = CockpitFallbackToWinforms;
             dict["cockpit_schema_version"] = CockpitSchemaVersion;
+
+            // Agent Server (Hermes)
+            if (AgentServer != null) dict["agent_server"] = AgentServer.ToDict();
+
+            // Hindsight RAG
+            if (Hindsight != null) dict["hindsight"] = Hindsight.ToDict();
 
             string json = new JavaScriptSerializer().Serialize(dict);
             File.WriteAllText(path, json, Encoding.UTF8);
