@@ -702,7 +702,14 @@
         } else if (cmd === 'agent.job.poll' || (!cmd && state.activeJob && state.activeJob.job_id && (data.job_id === state.activeJob.job_id || data.jobId === state.activeJob.job_id))) {
           handleJobPollResult(result);
         } else {
-          addAIMessage('system', result.message || JSON.stringify(result));
+          // Hermes AI response has data.content; show as 'ai' message
+          if (data && data.content) {
+            addAIMessage('ai', data.content);
+          } else if (result.ok && result.message) {
+            addAIMessage('system', result.message);
+          } else {
+            addAIMessage('system', result.message || JSON.stringify(result));
+          }
         }
       },
       navigate_page: function (pageId) {
@@ -983,6 +990,7 @@
       var reply = '收到：' + text + '\n当前页面：' + PAGES[state.currentPage].title;
       if (c) reply += '\n当前文件：' + c.fileName;
       if (sel) reply += '\n选中对象：' + sel.name;
+      reply += '\n\n⏳ Agent 疯狂输出中，请稍后…';
       addAIMessage('ai', reply);
     }, 400);
   }

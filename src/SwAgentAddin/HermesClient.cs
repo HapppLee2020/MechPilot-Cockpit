@@ -27,6 +27,7 @@ namespace SwAgentAddin
         public int TimeoutSeconds { get; set; } = 120;
         public int PollIntervalSeconds { get; set; } = 3;
         public string ContextModeDefault { get; set; } = "summary";
+        public string Model { get; set; } = "hermes-agent";
 
         public static AgentServerConfig FromJson(Dictionary<string, object> dict)
         {
@@ -48,6 +49,7 @@ namespace SwAgentAddin
             cfg.JobPollIntervalSeconds = cfg.PollIntervalSeconds;
             if (dict.ContainsKey("job_poll_interval_seconds")) cfg.JobPollIntervalSeconds = Convert.ToInt32(dict["job_poll_interval_seconds"]);
             if (dict.ContainsKey("context_mode_default")) cfg.ContextModeDefault = Convert.ToString(dict["context_mode_default"]);
+            if (dict.ContainsKey("model")) cfg.Model = Convert.ToString(dict["model"]);
             return cfg;
         }
 
@@ -69,7 +71,8 @@ namespace SwAgentAddin
                 ["timeout_seconds"] = TimeoutSeconds,
                 ["poll_interval_seconds"] = PollIntervalSeconds,
                 ["job_poll_interval_seconds"] = JobPollIntervalSeconds,
-                ["context_mode_default"] = ContextModeDefault
+                ["context_mode_default"] = ContextModeDefault,
+                ["model"] = Model,
             };
         }
     }
@@ -99,34 +102,71 @@ namespace SwAgentAddin
             var sw = System.Diagnostics.Stopwatch.StartNew();
             string url = _server.BaseUrl.TrimEnd('/') + _server.InvokeEndpoint;
             string requestId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            bool isOpenAiFormat = _server.InvokeEndpoint.Contains("chat/completions");
 
             try
             {
-                var body = new Dictionary<string, object>
-                {
-                    ["action"] = action,
-                    ["request_id"] = requestId,
-                    ["payload"] = payload,
-                    ["context_mode"] = contextMode ?? _server.ContextModeDefault
-                };
+                string json;
 
-                string json = new JavaScriptSerializer().Serialize(body);
+                if (isOpenAiFormat)
+                {
+                    // Convert to OpenAI /v1/chat/completions format
+                    string systemMsg = string.Format("你是 MechPilot 的 AI 助手。当前操作：{0}。上下文模式：{1}",
+                        action, contextMode ?? _server.ContextModeDefault);
+
+                    string userMsg = BuildUserMessageFromPayload(payload);
+
+                    var openAiBody = new Dictionary<string, object>
+                    {
+                        ["model"] = _server.Model,
+                        ["messages"] = new[]
+                        {
+                            new Dictionary<string, string> { ["role"] = "system", ["content"] = systemMsg },
+                            new Dictionary<string, string> { ["role"] = "user", ["content"] = userMsg }
+                        }
+                    };
+                    json = new JavaScriptSerializer().Serialize(openAiBody);
+                }
+                else
+                {
+                    // Original MechPilot format
+                    var body = new Dictionary<string, object>
+                    {
+                        ["action"] = action,
+                        ["request_id"] = requestId,
+                        ["payload"] = payload,
+                        ["context_mode"] = contextMode ?? _server.ContextModeDefault
+                    };
+                    json = new JavaScriptSerializer().Serialize(body);
+                }
+
                 _log(string.Format("[Hermes] invoke action={0} req={1} url={2}", action, requestId, url));
 
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-                AddAuthHeader(content);
-                var response = _http.PostAsync(url, content).GetAwaiter().GetResult();
-                string result = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                // Run HTTP on background thread to avoid blocking SolidWorks UI
+                return System.Threading.Tasks.Task.Run(() =>
+                {
+                    using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+                    {
+                        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                        AddAuthHeader(request);
+                        var response = _http.SendAsync(request).GetAwaiter().GetResult();
+                        string httpResult = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
-                sw.Stop();
-                _log(string.Format("[Hermes] invoke action={0} req={1} status={2} elapsed={3:F0}ms",
-                    action, requestId, (int)response.StatusCode, sw.Elapsed.TotalMilliseconds));
+                        sw.Stop();
+                        _log(string.Format("[Hermes] invoke action={0} req={1} status={2} elapsed={3:F0}ms",
+                            action, requestId, (int)response.StatusCode, sw.Elapsed.TotalMilliseconds));
 
-                if (response.IsSuccessStatusCode)
-                    return result;
+                        if (response.IsSuccessStatusCode)
+                        {
+                            if (isOpenAiFormat)
+                                return ConvertOpenAiResultToMechPilot(httpResult, action, requestId);
+                            return httpResult;
+                        }
 
-                return MakeOfflineResult(action, requestId,
-                    string.Format("Hermes returned {0}: {1}", (int)response.StatusCode, Shorten(result, 200)));
+                        return MakeOfflineResult(action, requestId,
+                            string.Format("Hermes returned {0}: {1}", (int)response.StatusCode, Shorten(httpResult, 200)));
+                    }
+                }).GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {
@@ -166,10 +206,12 @@ namespace SwAgentAddin
                 string json = new JavaScriptSerializer().Serialize(body);
                 _log(string.Format("[Hermes] submit task_type={0} req={1} url={2}", taskType, requestId, url));
 
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-                AddAuthHeader(content);
-                var response = _http.PostAsync(url, content).GetAwaiter().GetResult();
-                string result = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+                {
+                    request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                    AddAuthHeader(request);
+                    var response = _http.SendAsync(request).GetAwaiter().GetResult();
+                    string result = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
                 sw.Stop();
                 _log(string.Format("[Hermes] submit task_type={0} req={1} status={2} elapsed={3:F0}ms",
@@ -194,6 +236,7 @@ namespace SwAgentAddin
                     ["request_id"] = requestId,
                     ["error"] = string.Format("Hermes returned {0}: {1}", (int)response.StatusCode, Shorten(result, 200))
                 };
+                }
             }
             catch (Exception ex)
             {
@@ -548,6 +591,121 @@ namespace SwAgentAddin
                 }
             });
         }
+
+        /// <summary>
+        /// 从 MechPilot payload 构建 OpenAI user message
+        /// </summary>
+        private static string BuildUserMessageFromPayload(object payload)
+        {
+            var sb = new StringBuilder();
+
+            if (payload is Dictionary<string, object> dict)
+            {
+                if (dict.ContainsKey("context"))
+                {
+                    var ctx = dict["context"] as Dictionary<string, object>;
+                    if (ctx != null)
+                    {
+                        if (ctx.ContainsKey("document"))
+                        {
+                            var doc = ctx["document"] as Dictionary<string, object>;
+                            if (doc != null)
+                            {
+                                string title = doc.ContainsKey("title") ? Convert.ToString(doc["title"]) : "";
+                                string docType = doc.ContainsKey("doc_type") ? Convert.ToString(doc["doc_type"]) : "";
+                                if (!string.IsNullOrEmpty(title))
+                                    sb.AppendLine("当前文档：" + title + " (" + docType + ")");
+                            }
+                        }
+                        if (ctx.ContainsKey("summary"))
+                        {
+                            var summary = ctx["summary"] as Dictionary<string, object>;
+                            if (summary != null && summary.ContainsKey("total_components"))
+                                sb.AppendLine("零部件总数：" + Convert.ToString(summary["total_components"]));
+                        }
+                    }
+                }
+
+                if (dict.ContainsKey("payload"))
+                {
+                    var inner = dict["payload"];
+                    if (inner is Dictionary<string, object> innerDict)
+                    {
+                        if (innerDict.ContainsKey("query"))
+                            sb.AppendLine("查询：" + Convert.ToString(innerDict["query"]));
+                        if (innerDict.ContainsKey("message"))
+                            sb.AppendLine(Convert.ToString(innerDict["message"]));
+                    }
+                    else if (inner is string s)
+                        sb.AppendLine(s);
+                }
+            }
+            else if (payload is string s)
+                sb.AppendLine(s);
+
+            if (sb.Length == 0)
+                sb.AppendLine("请帮助处理当前 SolidWorks 文档的相关任务。");
+
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>
+        /// 将 OpenAI /v1/chat/completions 响应转换为 MechPilot 格式
+        /// </summary>
+        private static string ConvertOpenAiResultToMechPilot(string openAiJson, string action, string requestId)
+        {
+            try
+            {
+                var serializer = new JavaScriptSerializer();
+                var parsed = serializer.Deserialize<Dictionary<string, object>>(openAiJson);
+                string aiContent = "";
+
+                if (parsed != null && parsed.ContainsKey("choices"))
+                {
+                    var choices = parsed["choices"] as System.Collections.ArrayList;
+                    if (choices != null && choices.Count > 0)
+                    {
+                        var choice = choices[0] as Dictionary<string, object>;
+                        if (choice != null && choice.ContainsKey("message"))
+                        {
+                            var msg = choice["message"] as Dictionary<string, object>;
+                            if (msg != null && msg.ContainsKey("content"))
+                                aiContent = Convert.ToString(msg["content"]);
+                        }
+                    }
+                }
+
+                return serializer.Serialize(new Dictionary<string, object>
+                {
+                    ["request_id"] = requestId,
+                    ["success"] = true,
+                    ["action"] = action,
+                    ["data"] = new Dictionary<string, object>
+                    {
+                        ["source"] = "hermes",
+                        ["content"] = aiContent,
+                        ["model"] = parsed != null && parsed.ContainsKey("model") ? parsed["model"] : "unknown"
+                    }
+                });
+            }
+            catch
+            {
+                // If parsing fails, return raw as content
+                return new JavaScriptSerializer().Serialize(new Dictionary<string, object>
+                {
+                    ["request_id"] = requestId,
+                    ["success"] = true,
+                    ["action"] = action,
+                    ["data"] = new Dictionary<string, object>
+                    {
+                        ["source"] = "hermes",
+                        ["content"] = openAiJson,
+                        ["model"] = "unknown"
+                    }
+                });
+            }
+        }
+
 
         private static string Shorten(string text, int max)
         {

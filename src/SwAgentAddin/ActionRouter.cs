@@ -383,9 +383,15 @@ namespace SwAgentAddin
                         legacyCmd);
                 }
 
-                string error = parsed != null && parsed.ContainsKey("error")
-                    ? Convert.ToString(parsed["error"])
-                    : hermesResult;
+                string error = hermesResult;
+                if (parsed != null && parsed.ContainsKey("error"))
+                {
+                    var errObj = parsed["error"];
+                    if (errObj is Dictionary<string, object> errDict && errDict.ContainsKey("message"))
+                        error = Convert.ToString(errDict["message"]);
+                    else
+                        error = Convert.ToString(errObj);
+                }
                 return MechPilotResult.FailResult(cmd.CommandId, "Hermes 调用失败: " + Shorten(error, 200),
                     "HERMES_CALL_FAILED", legacyCmd);
             }
