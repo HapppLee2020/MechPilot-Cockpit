@@ -601,11 +601,11 @@ namespace SwAgentAddin
                     return;
                 }
 
-                // If already open, bring to front
+                // If already open, bring to front and ensure maximized
                 if (_cockpitForm != null && !_cockpitForm.IsDisposed)
                 {
                     _cockpitForm.BringToFront();
-                    _cockpitForm.WindowState = FormWindowState.Maximized;
+                    _cockpitForm.EnsureCustomMaximized();  // 使用自定义最大化，不遮挡任务栏
                     return;
                 }
 
@@ -2887,7 +2887,10 @@ namespace SwAgentAddin
                 ["auth_mode"] = string.IsNullOrEmpty(agent.AuthMode) ? "none" : agent.AuthMode,
                 ["context_mode_default"] = agent.ContextModeDefault ?? "summary",
                 ["timeout_seconds"] = agent.TimeoutSeconds,
-                ["poll_interval_seconds"] = agent.PollIntervalSeconds
+                ["poll_interval_seconds"] = agent.PollIntervalSeconds,
+                ["job_submit_endpoint"] = agent.JobSubmitEndpoint ?? "/api/jobs",
+                ["job_status_endpoint_template"] = agent.JobStatusEndpointTemplate ?? "/api/jobs/{job_id}",
+                ["job_poll_interval_seconds"] = agent.JobPollIntervalSeconds
             },
             ["hindsight"] = new Dictionary<string, object>
             {
@@ -3134,6 +3137,8 @@ namespace SwAgentAddin
         private readonly Func<string, string> _handleCommand;
         private WebView2 _webView;
         private Rectangle _normalBounds = Rectangle.Empty;
+        private Rectangle _customMaxBounds = Rectangle.Empty;
+        private bool _isCustomMaximized = false;
         private string _pendingPage;
         private bool _pageLoaded;
 
@@ -3157,7 +3162,8 @@ namespace SwAgentAddin
             Padding = new Padding(6);
             BackColor = Color.FromArgb(217, 221, 228);
             _normalBounds = Bounds;
-            WindowState = FormWindowState.Maximized;
+            // 初次展示使用自定义最大化，贴合 WorkingArea 不遮挡任务栏
+            ApplyCustomMaximize();
 
             // === WebView2 (fills remaining space) ===
             try
@@ -3215,7 +3221,8 @@ namespace SwAgentAddin
             if (m.Msg == WM_NCHITTEST)
             {
                 var pos = PointToClient(Cursor.Position);
-                if (WindowState != FormWindowState.Maximized)
+                // 自定义最大化时禁用边框 resize 热区（窗口已贴合屏幕边缘）
+                if (!_isCustomMaximized)
                 {
                     bool left = pos.X >= 0 && pos.X < ResizeGrip;
                     bool right = pos.X <= Width && pos.X > Width - ResizeGrip;
@@ -3387,25 +3394,46 @@ namespace SwAgentAddin
 
         private void ToggleMaximizeRestore()
         {
-            if (WindowState == FormWindowState.Maximized)
+            if (_isCustomMaximized)
             {
-                WindowState = FormWindowState.Normal;
-                if (_normalBounds.Width < MinimumSize.Width || _normalBounds.Height < MinimumSize.Height)
-                {
-                    Rectangle area = Screen.FromControl(this).WorkingArea;
-                    Size size = new Size(Math.Min(1280, area.Width - 80), Math.Min(800, area.Height - 80));
-                    _normalBounds = new Rectangle(
-                        area.Left + (area.Width - size.Width) / 2,
-                        area.Top + (area.Height - size.Height) / 2,
-                        size.Width,
-                        size.Height);
-                }
+                // 还原到正常窗口
                 Bounds = _normalBounds;
+                _isCustomMaximized = false;
                 return;
             }
 
+            // 保存当前窗口大小作为还原目标
             _normalBounds = Bounds;
-            WindowState = FormWindowState.Maximized;
+            ApplyCustomMaximize();
+        }
+
+        /// <summary>
+        /// 应用自定义最大化：将窗口贴合当前屏幕 WorkingArea（不遮挡任务栏）
+        /// </summary>
+        private void ApplyCustomMaximize()
+        {
+            Rectangle workingArea = Screen.FromControl(this).WorkingArea;
+            _customMaxBounds = workingArea;
+            Bounds = workingArea;
+            WindowState = FormWindowState.Normal;  // 保持 Normal，靠 Bounds 撑满
+            _isCustomMaximized = true;
+            Debug.WriteLine("[CockpitForm] ApplyCustomMaximize workingArea=" + workingArea);
+        }
+
+        /// <summary>
+        /// 公开方法：确保窗口处于最大化状态（供 SwCmd_Cockpit 复用时调用）
+        /// </summary>
+        public void EnsureCustomMaximized()
+        {
+            if (!_isCustomMaximized)
+            {
+                ApplyCustomMaximize();
+            }
+            else if (Bounds != _customMaxBounds)
+            {
+                // 窗口可能被移动，重新应用 WorkingArea
+                ApplyCustomMaximize();
+            }
         }
 
         /// <summary>

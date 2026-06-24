@@ -40,7 +40,7 @@
   "online_selection_url": "https://xtalpi.aiforce.cloud/app/app_4k6beaevn9gub",
   "agent_server": {
     "provider": "hermes",
-    "base_url": "http://127.0.0.1:8080",
+    "base_url": "http://127.0.0.1:19090",
     "auth_mode": "none",
     "api_key": "",
     "task_endpoint": "/api/v1/task",
@@ -48,8 +48,11 @@
     "result_endpoint_template": "/api/v1/task/{task_id}/result",
     "stream_endpoint_template": "/api/v1/task/{task_id}/stream",
     "invoke_endpoint": "/api/v1/agent/invoke",
+    "job_submit_endpoint": "/api/jobs",
+    "job_status_endpoint_template": "/api/jobs/{job_id}",
     "timeout_seconds": 120,
     "poll_interval_seconds": 3,
+    "job_poll_interval_seconds": 3,
     "context_mode_default": "summary"
   },
   "hindsight": {

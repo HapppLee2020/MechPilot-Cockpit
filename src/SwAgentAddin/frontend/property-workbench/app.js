@@ -37,13 +37,15 @@
   var state = {
     context: null,
     currentPage: DEFAULT_PAGE,
-    selectedNode: null,        // 当前选中节点（全局共享）
+    selectedNode: null,        // 当前高亮节点（右侧摘要展示）
+    checkedNodeIds: new Set(), // 勾选节点（批量属性审核等）
     expandedSet: new Set(),    // 设计树展开状态
     aiPanelOpen: true,
     aiMessages: [],
     hermesOnline: false,
     ragOnline: false,          // RAG 服务状态
     tasks: [],
+    activeJob: null,
     settings: {
       executionMode: 'local',
       hermesUrl: 'http://localhost:5000',
@@ -57,6 +59,8 @@
       ragScoreThreshold: 0.35
     }
   };
+
+  var jobPollTimer = null;
 
   // ══════════════════════════════════════════════════════════
   //  工具函数
@@ -106,6 +110,145 @@
     return null;
   }
 
+  function isPartNode(node) {
+    if (!node) return false;
+    return node.type === 'part' || node.docType === '零件';
+  }
+
+  function isAssemblyNode(node) {
+    if (!node) return false;
+    return node.type === 'assembly' || node.docType === '装配体' ||
+      (node.children && node.children.length > 0);
+  }
+
+  function isSubmittableNode(node) {
+    if (!node || !isPartNode(node)) return false;
+    // TODO: 待 C# 提供 isHidden / isEnvelope / bomExcluded 等字段后再过滤
+    return true;
+  }
+
+  function isDefaultCheckablePart(node) {
+    if (!isSubmittableNode(node)) return false;
+    if (node.isSuppressed) return false;
+    // TODO: 轻化/封套/BOM 排除等待后端字段；当前仅排除 isSuppressed
+    return true;
+  }
+
+  function walkSubtree(node, fn) {
+    if (!node) return;
+    fn(node);
+    (node.children || []).forEach(function (child) { walkSubtree(child, fn); });
+  }
+
+  function collectPartNodeIds(node, out) {
+    out = out || [];
+    if (!node) return out;
+    walkSubtree(node, function (n) {
+      if (isSubmittableNode(n)) out.push(n.id);
+    });
+    return out;
+  }
+
+  function initDefaultCheckedNodeIds() {
+    state.checkedNodeIds = new Set();
+    var tree = state.context && state.context.tree;
+    if (!tree) return;
+    walkSubtree(tree, function (n) {
+      if (isDefaultCheckablePart(n)) state.checkedNodeIds.add(n.id);
+    });
+  }
+
+  function getCheckedPartCount() {
+    var tree = state.context && state.context.tree;
+    if (!tree) return 0;
+    var count = 0;
+    state.checkedNodeIds.forEach(function (id) {
+      var node = findNodeById(tree, id);
+      if (node && isSubmittableNode(node)) count++;
+    });
+    return count;
+  }
+
+  function getCheckedNodeCount() {
+    return state.checkedNodeIds.size;
+  }
+
+  function getAssemblyCheckState(node) {
+    var partIds = collectPartNodeIds(node, []);
+    if (partIds.length === 0) return { checked: false, indeterminate: false };
+    var checkedCount = 0;
+    partIds.forEach(function (id) {
+      if (state.checkedNodeIds.has(id)) checkedCount++;
+    });
+    if (checkedCount === 0) return { checked: false, indeterminate: false };
+    if (checkedCount === partIds.length) return { checked: true, indeterminate: false };
+    return { checked: false, indeterminate: true };
+  }
+
+  function setSubtreeChecked(node, checked) {
+    walkSubtree(node, function (n) {
+      if (isSubmittableNode(n)) {
+        if (checked) state.checkedNodeIds.add(n.id);
+        else state.checkedNodeIds.delete(n.id);
+      } else if (isAssemblyNode(n)) {
+        if (checked) state.checkedNodeIds.add(n.id);
+        else state.checkedNodeIds.delete(n.id);
+      }
+    });
+  }
+
+  function handleNodeCheckToggle(node, checked) {
+    if (isAssemblyNode(node) && node.children && node.children.length > 0) {
+      setSubtreeChecked(node, checked);
+    } else if (isSubmittableNode(node)) {
+      if (checked) state.checkedNodeIds.add(node.id);
+      else state.checkedNodeIds.delete(node.id);
+    }
+    refreshCheckedUi();
+  }
+
+  function refreshCheckedUi() {
+    refreshDesignTree();
+    updateOverviewSummary();
+    updateOverviewBottomStats();
+    renderActionList();
+    renderStatusbar();
+  }
+
+  function buildComponentFromNode(node) {
+    return {
+      component_id: node.id,
+      component_path: node.filePath || '',
+      file_path: node.filePath || '',
+      name: node.name,
+      type: node.type,
+      doc_type: node.docType || node.type || '',
+      quantity: node.quantity || 1,
+      properties: node.properties || {},
+      is_filtered_clean: !(node.isSuppressed || node.isLightweight),
+      state: '未知',
+      part_number: node.partNumber || node.part_number || node.name || '',
+      configuration: node.configuration || '',
+      operation: 'material_properties_review'
+    };
+  }
+
+  function getCheckedComponents() {
+    var tree = state.context && state.context.tree;
+    if (!tree) return [];
+    var components = [];
+    var seen = {};
+    state.checkedNodeIds.forEach(function (id) {
+      if (seen[id]) return;
+      var node = findNodeById(tree, id);
+      if (node && isSubmittableNode(node)) {
+        seen[id] = true;
+        components.push(buildComponentFromNode(node));
+      }
+    });
+    return components;
+  }
+
   function extractResultItems(result) {
     var data = (result && result.data) || {};
     var candidates = [
@@ -120,6 +263,240 @@
       if (Array.isArray(candidates[i])) return candidates[i];
     }
     return [];
+  }
+
+  function isCommandSuccess(result) {
+    return !!(result && (result.success === true || result.ok === true));
+  }
+
+  function getResultData(result) {
+    return (result && result.data) || {};
+  }
+
+  function isTerminalJobStatus(status) {
+    status = String(status || '').toLowerCase();
+    return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'canceled';
+  }
+
+  function normalizeJobData(data, fallback) {
+    data = data || {};
+    fallback = fallback || {};
+    var progress = data.progress_percent != null ? data.progress_percent : (data.progressPercent != null ? data.progressPercent : data.progress);
+    progress = progress == null ? fallback.progress_percent : Number(progress);
+    if (isNaN(progress)) progress = 0;
+    progress = Math.max(0, Math.min(100, progress));
+
+    return {
+      job_id: data.job_id || data.jobId || data.id || fallback.job_id || '',
+      accepted: data.accepted != null ? !!data.accepted : (fallback.accepted != null ? fallback.accepted : isCommandSuccess({ success: data.success, ok: data.ok })),
+      status: data.status || fallback.status || (data.job_id || data.jobId ? 'queued' : 'unknown'),
+      queue_position: data.queue_position != null ? data.queue_position : (data.queuePosition != null ? data.queuePosition : fallback.queue_position),
+      estimated_wait_seconds: data.estimated_wait_seconds != null ? data.estimated_wait_seconds : (data.estimatedWaitSeconds != null ? data.estimatedWaitSeconds : fallback.estimated_wait_seconds),
+      total_items: data.total_items != null ? data.total_items : (data.totalItems != null ? data.totalItems : fallback.total_items),
+      completed_items: data.completed_items != null ? data.completed_items : (data.completedItems != null ? data.completedItems : fallback.completed_items),
+      failed_items: data.failed_items != null ? data.failed_items : (data.failedItems != null ? data.failedItems : fallback.failed_items),
+      progress_percent: progress,
+      current_stage: data.current_stage || data.currentStage || fallback.current_stage || '',
+      message: data.message || fallback.message || ''
+    };
+  }
+
+  function formatSeconds(seconds) {
+    if (seconds == null || seconds === '') return '-';
+    seconds = Number(seconds);
+    if (isNaN(seconds)) return '-';
+    if (seconds < 60) return Math.max(0, Math.round(seconds)) + ' 秒';
+    return Math.floor(seconds / 60) + ' 分 ' + Math.round(seconds % 60) + ' 秒';
+  }
+
+  function buildJobPayload(intent, extra) {
+    var c = state.context;
+    var selected = state.selectedNode;
+    var components = getCheckedComponents();
+    var tree = c ? c.tree : null;
+    var payload = {
+      intent: intent || 'material_properties_review',
+      session_context: {
+        source: 'cockpit',
+        operation: 'material_properties_review',
+        dry_run: true,
+        page: state.currentPage,
+        assembly_path: c ? c.filePath : '',
+        fileName: c ? c.fileName : '',
+        filePath: c ? c.filePath : '',
+        mode: c ? c.mode : state.settings.executionMode,
+        view_mode: state.viewMode || 'tree',
+        auto_fix_enabled: false,
+        engineer_id: state.settings.engineerId || state.settings.engineer_id || '',
+        total_selected: tree ? countParts(tree) : 0,
+        selected_count: getCheckedPartCount(),
+        submitted_at: new Date().toISOString(),
+        selectedNode: selected ? {
+          id: selected.id,
+          name: selected.name,
+          type: selected.type,
+          filePath: selected.filePath
+        } : null,
+        checkedCount: getCheckedNodeCount(),
+        checkedPartCount: getCheckedPartCount(),
+        contextMode: state.settings.contextMode
+      },
+      components: components
+    };
+    Object.keys(extra || {}).forEach(function (key) { payload[key] = extra[key]; });
+    return payload;
+  }
+
+  function clearJobPollTimer() {
+    if (jobPollTimer) {
+      clearInterval(jobPollTimer);
+      jobPollTimer = null;
+    }
+  }
+
+  function startJobPolling(jobId) {
+    clearJobPollTimer();
+    if (!jobId) return;
+    jobPollTimer = setInterval(function () {
+      if (!state.activeJob || state.activeJob.job_id !== jobId || isTerminalJobStatus(state.activeJob.status)) {
+        clearJobPollTimer();
+        return;
+      }
+      window.MechPilot.sendCommand('agent.job.poll', { job_id: jobId });
+    }, 3000);
+  }
+
+  function submitJob(command, payload, sourceLabel) {
+    clearJobPollTimer();
+    state.activeJob = {
+      job_id: '',
+      accepted: false,
+      status: 'submitting',
+      progress_percent: 0,
+      current_stage: '提交中',
+      source: sourceLabel || command,
+      submitted_at: new Date(),
+      request_id: null,
+      payload: payload
+    };
+    renderJobStatusPanel();
+    renderStatusbar();
+
+    try {
+      state.activeJob.request_id = window.MechPilot.sendCommand(command, payload);
+      addAIMessage('system', '已提交任务，等待后端受理：' + (sourceLabel || command));
+    } catch (e) {
+      state.activeJob.status = 'failed';
+      state.activeJob.current_stage = '提交失败';
+      state.activeJob.message = '无法发送任务请求，请检查 WebView2 / Hermes 连接。';
+      renderJobStatusPanel();
+      renderStatusbar();
+      addAIMessage('system', state.activeJob.message);
+    }
+  }
+
+  function handleJobSubmitResult(result) {
+    var data = getResultData(result);
+    if (!isCommandSuccess(result) || !(data.job_id || data.jobId || data.id)) {
+      state.activeJob = normalizeJobData(data, state.activeJob);
+      state.activeJob.status = 'failed';
+      state.activeJob.current_stage = '受理失败';
+      state.activeJob.message = (result && result.message) || (result && result.error && result.error.message) || '任务提交失败，请检查 Hermes 服务或 C# 返回。';
+      clearJobPollTimer();
+      renderJobStatusPanel();
+      renderStatusbar();
+      addAIMessage('system', state.activeJob.message);
+      return;
+    }
+
+    state.activeJob = normalizeJobData(data, state.activeJob);
+    state.activeJob.accepted = true;
+    state.activeJob.status = state.activeJob.status || 'queued';
+    state.activeJob.current_stage = state.activeJob.current_stage || '排队中';
+    renderJobStatusPanel();
+    renderStatusbar();
+    addAIMessage('system', '任务已受理，Job ID：' + state.activeJob.job_id);
+    startJobPolling(state.activeJob.job_id);
+  }
+
+  function handleJobPollResult(result) {
+    var data = getResultData(result);
+    if (!isCommandSuccess(result)) {
+      if (!state.activeJob) state.activeJob = {};
+      state.activeJob.status = 'failed';
+      state.activeJob.current_stage = '轮询失败';
+      state.activeJob.message = (result && result.message) || (result && result.error && result.error.message) || '获取任务状态失败，请检查 Hermes 服务。';
+      clearJobPollTimer();
+      renderJobStatusPanel();
+      renderStatusbar();
+      addAIMessage('system', state.activeJob.message);
+      return;
+    }
+
+    state.activeJob = normalizeJobData(data, state.activeJob);
+    renderJobStatusPanel();
+    renderStatusbar();
+    if (isTerminalJobStatus(state.activeJob.status)) {
+      clearJobPollTimer();
+      addAIMessage('system', '任务状态：' + state.activeJob.status);
+    }
+  }
+
+  function statusLabel(status) {
+    var map = {
+      submitting: '提交中',
+      accepted: '已受理',
+      queued: '排队中',
+      running: '运行中',
+      completed: '已完成',
+      failed: '失败',
+      cancelled: '已取消',
+      canceled: '已取消'
+    };
+    return map[status] || status || '未知';
+  }
+
+  function renderJobStatusPanel() {
+    var boxes = document.querySelectorAll('[data-job-status-panel]');
+    if (!boxes.length) return;
+    boxes.forEach(function (box) { box.innerHTML = buildJobStatusHtml(); });
+  }
+
+  function buildJobStatusHtml() {
+    var job = state.activeJob;
+    if (!job) return '<p class="hint">暂无进行中的 job。提交属性审核或 Agent 任务后，会在这里显示排队与进度。</p>';
+
+    var progress = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
+    var terminal = isTerminalJobStatus(job.status);
+    var statusClass = job.status === 'failed' ? 'error' : (terminal ? 'done' : 'running');
+    var submittedCount = job.payload && job.payload.components ? job.payload.components.length : 0;
+    return '' +
+      '<div class="job-panel ' + statusClass + '">' +
+        '<div class="job-panel-head">' +
+          '<div>' +
+            '<div class="job-title">任务' + (job.accepted ? '已受理' : '提交中') + '</div>' +
+            '<div class="job-subtitle">' + esc(job.source || 'Agent Job') + '</div>' +
+          '</div>' +
+          '<span class="badge badge-status ' + (statusClass === 'running' ? 'warning' : '') + '">' + esc(statusLabel(job.status)) + '</span>' +
+        '</div>' +
+        '<div class="job-grid">' +
+          '<div><span>Job ID</span><b>' + esc(job.job_id || '-') + '</b></div>' +
+          '<div><span>队列位置</span><b>' + esc(job.queue_position != null ? job.queue_position : '-') + '</b></div>' +
+          '<div><span>预计等待</span><b>' + esc(formatSeconds(job.estimated_wait_seconds)) + '</b></div>' +
+          '<div><span>当前阶段</span><b>' + esc(job.current_stage || '-') + '</b></div>' +
+          (submittedCount > 0 ? '<div><span>已提交组件</span><b>' + submittedCount + ' 个</b></div>' : '') +
+        '</div>' +
+        '<div class="job-progress">' +
+          '<div class="progress-wrap">' +
+            '<div class="progress-track"><div class="progress-bar" style="width:' + progress + '%"></div></div>' +
+            '<span class="progress-text">' + Math.round(progress) + '%</span>' +
+          '</div>' +
+          '<div class="job-counts">总数 ' + esc(job.total_items != null ? job.total_items : '-') +
+            ' / 已完成 ' + esc(job.completed_items != null ? job.completed_items : '-') +
+            ' / 失败 ' + esc(job.failed_items != null ? job.failed_items : '-') + '</div>' +
+        '</div>' +
+        (job.message ? '<p class="' + (job.status === 'failed' ? 'warn' : 'hint') + '">' + esc(job.message) + '</p>' : '') +
+      '</div>';
   }
 
   function pick(obj, pascalKey, camelKey, snakeKey, fallback) {
@@ -269,8 +646,9 @@
     if (state.context) {
       state.settings.executionMode = state.context.mode || 'local';
       applyRuntimeConfig(state.context._runtimeConfig);
-      // 默认选中根节点
+      // 默认高亮根节点；默认勾选所有有效零件
       state.selectedNode = state.context.tree;
+      initDefaultCheckedNodeIds();
       // 默认展开根节点和第一层
       state.expandedSet.add(state.context.tree.id);
       if (state.context.tree.children) {
@@ -281,6 +659,7 @@
     installWindowControls();
     installSidebar();
     installAIPanel();
+    window.addEventListener('beforeunload', clearJobPollTimer);
     navigatePage(state.currentPage);
     renderTopbar();
     renderStatusbar();
@@ -296,6 +675,7 @@
         if (state.context) {
           applyRuntimeConfig(state.context._runtimeConfig);
           state.selectedNode = state.context.tree;
+          initDefaultCheckedNodeIds();
           state.expandedSet.clear();
           state.expandedSet.add(state.context.tree.id);
           if (state.context.tree.children) {
@@ -312,10 +692,15 @@
         }
 
         var cmd = result.command || result.action || result.type;
+        var data = getResultData(result);
         if (cmd === 'ai.material.search') {
           renderMaterialResults(result);
           var count = extractResultItems(result).length;
           addAIMessage('system', '物料检索完成，共 ' + count + ' 条结果');
+        } else if (cmd === 'material.properties.review.submit' || cmd === 'agent.job.submit' || (!cmd && state.activeJob && state.activeJob.status === 'submitting' && (data.job_id || data.jobId || data.id))) {
+          handleJobSubmitResult(result);
+        } else if (cmd === 'agent.job.poll' || (!cmd && state.activeJob && state.activeJob.job_id && (data.job_id === state.activeJob.job_id || data.jobId === state.activeJob.job_id))) {
+          handleJobPollResult(result);
         } else {
           addAIMessage('system', result.message || JSON.stringify(result));
         }
@@ -361,6 +746,48 @@
                 }
               });
             }, 500);
+          } else if (type === 'material.properties.review.submit' || type === 'agent.job.submit') {
+            setTimeout(function () {
+              window.MechPilot.receiveResult({
+                request_id: requestId,
+                command: type,
+                success: true,
+                data: {
+                  job_id: 'job-mock-' + Date.now(),
+                  accepted: true,
+                  status: 'queued',
+                  queue_position: 2,
+                  estimated_wait_seconds: 18,
+                  total_items: payload && payload.components ? payload.components.length : 1,
+                  completed_items: 0,
+                  failed_items: 0,
+                  progress_percent: 0,
+                  current_stage: '排队中'
+                }
+              });
+            }, 400);
+          } else if (type === 'agent.job.poll') {
+            setTimeout(function () {
+              var current = state.activeJob || {};
+              var progress = Math.min(100, Number(current.progress_percent || 0) + 35);
+              window.MechPilot.receiveResult({
+                request_id: requestId,
+                command: 'agent.job.poll',
+                success: true,
+                data: {
+                  job_id: payload && payload.job_id,
+                  accepted: true,
+                  status: progress >= 100 ? 'completed' : 'running',
+                  queue_position: progress > 0 ? 0 : current.queue_position,
+                  estimated_wait_seconds: Math.max(0, Number(current.estimated_wait_seconds || 0) - 3),
+                  total_items: current.total_items || 1,
+                  completed_items: progress >= 100 ? (current.total_items || 1) : current.completed_items || 0,
+                  failed_items: 0,
+                  progress_percent: progress,
+                  current_stage: progress >= 100 ? '完成' : '处理中'
+                }
+              });
+            }, 300);
           }
         }
         return requestId;
@@ -438,6 +865,9 @@
     var compCount = c && c.tree ? countNodes(c.tree) - 1 : 0;
     var partCount = c && c.tree ? countParts(c.tree) : 0;
     var selName = state.selectedNode ? state.selectedNode.name : '(无)';
+    var checkedParts = getCheckedPartCount();
+    var jobText = state.activeJob ? ('Job：' + statusLabel(state.activeJob.status)) : '就绪';
+    var jobTone = state.activeJob && state.activeJob.status === 'failed' ? 'error' : (state.activeJob && !isTerminalJobStatus(state.activeJob.status) ? 'warning' : '');
     el.innerHTML =
       '<div class="statusbar-row">' +
         '<span class="status-item"><span class="dot ' + (isMock ? 'dot-mock' : 'dot-real') + '"></span>' + (isMock ? '演示数据' : '真实数据') + '</span>' +
@@ -446,8 +876,10 @@
         '<span class="status-item">零件：<b>' + partCount + '</b></span>' +
         '<span class="sep"></span>' +
         '<span class="status-item">选中：<b>' + esc(selName) + '</b></span>' +
+        '<span class="status-item">已勾选：<b>' + getCheckedNodeCount() + '</b></span>' +
+        '<span class="status-item">勾选零件：<b>' + checkedParts + '</b></span>' +
         '<span class="sep"></span>' +
-        '<span class="status-item" id="status-agent">就绪</span>' +
+        '<span class="status-item ' + jobTone + '" id="status-agent">' + esc(jobText) + '</span>' +
       '</div>';
   }
 
@@ -474,6 +906,7 @@
     });
 
     var container = document.getElementById('page-container');
+    container.classList.toggle('page-overview-active', pageId === 'overview');
     container.innerHTML = '';
     PAGES[pageId].render(container);
   }
@@ -584,6 +1017,25 @@
     row.className = 'tree-row' + (isSelected ? ' selected' : '');
     row.style.paddingLeft = (8 + depth * 16) + 'px';
 
+    // 多选 checkbox
+    var checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'tree-checkbox';
+    checkbox.setAttribute('aria-label', '勾选 ' + node.name);
+    if (isAssemblyNode(node) && hasChildren) {
+      var asmState = getAssemblyCheckState(node);
+      checkbox.checked = asmState.checked;
+      checkbox.indeterminate = asmState.indeterminate;
+    } else {
+      checkbox.checked = state.checkedNodeIds.has(node.id);
+    }
+    checkbox.addEventListener('click', function (e) { e.stopPropagation(); });
+    checkbox.addEventListener('change', function (e) {
+      e.stopPropagation();
+      handleNodeCheckToggle(node, checkbox.checked);
+    });
+    row.appendChild(checkbox);
+
     // 展开箭头
     var toggle = document.createElement('span');
     toggle.className = 'tree-toggle ' + (hasChildren ? (isExpanded ? 'expanded' : '') : 'leaf');
@@ -635,13 +1087,12 @@
       row.appendChild(badgeLw);
     }
 
-    // 点击选中
+    // 点击高亮（不影响勾选）
     row.addEventListener('click', function () {
       state.selectedNode = node;
       refreshDesignTree();
       updateOverviewSummary();
       renderStatusbar();
-      // 通知 C#
       window.MechPilot.sendCommand('node_selected', { nodeId: node.id, name: node.name });
     });
 
@@ -671,29 +1122,41 @@
   //  总览页面
   // ══════════════════════════════════════════════════════════
   function renderOverview(container) {
+    var total = state.context && state.context.tree ? countNodes(state.context.tree) - 1 : 0;
+    var parts = state.context && state.context.tree ? countParts(state.context.tree) : 0;
+    var assy = total - parts;
+
     container.innerHTML =
-      '<div class="page-title">总览</div>' +
-      '<div class="overview-layout">' +
-        '<div class="overview-left">' +
-          '<div class="panel-header">设计树</div>' +
-          '<div class="design-tree-container" id="design-tree-container"></div>' +
+      '<div class="overview-page">' +
+        '<div class="page-title">总览</div>' +
+        '<div class="overview-body">' +
+          '<div class="overview-layout">' +
+            '<div class="overview-left">' +
+              '<div class="panel-header">设计树</div>' +
+              '<div class="design-tree-container" id="design-tree-container"></div>' +
+            '</div>' +
+            '<div class="overview-center">' +
+              '<div class="panel-header">选中对象摘要</div>' +
+              '<div class="summary-card" id="summary-card"></div>' +
+            '</div>' +
+            '<div class="overview-right">' +
+              '<div class="panel-header">可执行动作</div>' +
+              '<div class="overview-right-body">' +
+                '<div class="action-list" id="action-list"></div>' +
+                '<div class="job-status-inline" data-job-status-panel></div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
-        '<div class="overview-center">' +
-          '<div class="panel-header">选中对象摘要</div>' +
-          '<div class="summary-card" id="summary-card"></div>' +
-        '</div>' +
-        '<div class="overview-right">' +
-          '<div class="panel-header">可执行动作</div>' +
-          '<div class="action-list" id="action-list"></div>' +
-        '</div>' +
-      '</div>' +
-      '<div class="overview-bottom">' +
-        '<div class="stats-row">' +
-          '<div class="stat-card"><span class="stat-label">零部件总数</span><span class="stat-value" id="stat-total">' + (state.context && state.context.tree ? countNodes(state.context.tree) - 1 : 0) + '</span></div>' +
-          '<div class="stat-card"><span class="stat-label">零件数</span><span class="stat-value" id="stat-parts">' + (state.context && state.context.tree ? countParts(state.context.tree) : 0) + '</span></div>' +
-          '<div class="stat-card"><span class="stat-label">装配体数</span><span class="stat-value" id="stat-assy">' + (state.context && state.context.tree ? countNodes(state.context.tree) - 1 - countParts(state.context.tree) : 0) + '</span></div>' +
-          '<div class="stat-card"><span class="stat-label">属性完整度</span><span class="stat-value">62%</span></div>' +
-        '</div>' +
+        '<footer class="overview-stats-bar" aria-label="总览统计">' +
+          '<div class="stats-inline">' +
+            '<div class="stat-item"><span class="stat-label">零部件总数</span><span class="stat-value" id="stat-total">' + total + '</span></div>' +
+            '<div class="stat-item"><span class="stat-label">零件数</span><span class="stat-value" id="stat-parts">' + parts + '</span></div>' +
+            '<div class="stat-item"><span class="stat-label">装配体数</span><span class="stat-value" id="stat-assy">' + assy + '</span></div>' +
+            '<div class="stat-item"><span class="stat-label">属性完整度</span><span class="stat-value" id="stat-completeness">62%</span></div>' +
+            '<div class="stat-item"><span class="stat-label">已勾选数量</span><span class="stat-value" id="stat-checked-parts">0</span></div>' +
+          '</div>' +
+        '</footer>' +
       '</div>';
 
     // 渲染设计树
@@ -701,9 +1164,16 @@
 
     // 渲染摘要
     updateOverviewSummary();
+    updateOverviewBottomStats();
 
     // 渲染动作列表
     renderActionList();
+    renderJobStatusPanel();
+  }
+
+  function updateOverviewBottomStats() {
+    var checkedPartsEl = document.getElementById('stat-checked-parts');
+    if (checkedPartsEl) checkedPartsEl.textContent = String(getCheckedPartCount());
   }
 
   function updateOverviewSummary() {
@@ -711,8 +1181,14 @@
     if (!card) return;
 
     var node = state.selectedNode;
+    var batchHtml =
+      '<div class="summary-batch">' +
+        '<div class="kv"><span class="k">已勾选</span><span class="v"><b>' + getCheckedNodeCount() + '</b> 项</span></div>' +
+        '<div class="kv"><span class="k">已勾选零件</span><span class="v"><b>' + getCheckedPartCount() + '</b> 个</span></div>' +
+      '</div>';
+
     if (!node) {
-      card.innerHTML = '<p class="hint">请在左侧设计树中选择一个零部件。</p>';
+      card.innerHTML = batchHtml + '<p class="hint">请在左侧设计树中点击一个节点查看详情。</p>';
       return;
     }
 
@@ -729,6 +1205,8 @@
     }
 
     card.innerHTML =
+      batchHtml +
+      '<div class="summary-section-label">当前高亮</div>' +
       '<div class="summary-header">' +
         '<span class="summary-icon">' + (node.type === 'assembly' ? ICONS.assembly : ICONS.part) + '</span>' +
         '<span class="summary-name">' + esc(node.name) + '</span>' +
@@ -752,10 +1230,12 @@
     if (!list) return;
 
     var node = state.selectedNode;
+    var checkedParts = getCheckedPartCount();
 
     list.innerHTML =
       '<button class="action-btn" data-action="read_props"' + (node ? '' : ' disabled') + '>读取属性</button>' +
       '<button class="action-btn" data-action="check_props"' + (node ? '' : ' disabled') + '>属性检查</button>' +
+      '<button class="action-btn primary action-btn-review" data-action="review_props"' + (checkedParts > 0 ? '' : ' disabled') + '>属性审核</button>' +
       '<button class="action-btn" data-action="bom_locate"' + (node ? '' : ' disabled') + '>BOM定位</button>' +
       '<button class="action-btn" data-action="ai_analyze"' + (node ? '' : ' disabled') + '>发送给AI分析</button>' +
       '<button class="action-btn" data-action="refresh_context">刷新上下文</button>';
@@ -779,8 +1259,25 @@
         addAIMessage('system', '已发送读取属性请求：' + (node ? node.name : ''));
         break;
       case 'check_props':
-        window.MechPilot.sendCommand('ai.props.check', payload);
+        // 本地属性检查/更新
+        window.MechPilot.sendCommand('local.properties.check', payload);
         addAIMessage('system', '已发送属性检查请求：' + (node ? node.name : ''));
+        break;
+      case 'review_props':
+        if (getCheckedPartCount() === 0) {
+          addAIMessage('system', '请至少勾选一个零件后再提交属性审核。');
+          return;
+        }
+        submitJob(
+          'material.properties.review.submit',
+          buildJobPayload('material_properties_review', {
+            source_action: 'review_props',
+            legacy_command: 'ai.props.review',
+            selectedNode: node ? { id: node.id, name: node.name, filePath: node.filePath } : null,
+            checkedNodeIds: Array.from(state.checkedNodeIds)
+          }),
+          '属性审核'
+        );
         break;
       case 'bom_locate':
         window.MechPilot.sendCommand('bom.locate', payload);
@@ -1090,13 +1587,19 @@
           '<button class="btn-primary" id="btn-agent-refresh">刷新任务列表</button>' +
           '<button class="btn-secondary" id="btn-agent-submit">提交示例任务</button>' +
         '</div>' +
+        '<div class="result-box" data-job-status-panel></div>' +
         '<div class="result-box" id="agent-result"></div>' +
       '</div>';
 
+    renderJobStatusPanel();
     renderAgentTasks();
 
     document.getElementById('btn-agent-refresh').addEventListener('click', function () {
-      window.MechPilot.sendCommand('agent.task.poll', {});
+      if (state.activeJob && state.activeJob.job_id && !isTerminalJobStatus(state.activeJob.status)) {
+        window.MechPilot.sendCommand('agent.job.poll', { job_id: state.activeJob.job_id });
+      } else {
+        window.MechPilot.sendCommand('agent.task.poll', {});
+      }
       renderAgentTasks();
     });
     document.getElementById('btn-agent-submit').addEventListener('click', function () {
@@ -1108,7 +1611,15 @@
         summary: '新提交的示例任务'
       };
       state.tasks.push(task);
-      window.MechPilot.sendCommand('agent.task.submit', { type: task.type, summary: task.summary });
+      submitJob(
+        'agent.job.submit',
+        buildJobPayload('material_properties_review', {
+          source_action: 'agent_task_submit',
+          legacy_command: 'agent.task.submit',
+          task: { type: task.type, summary: task.summary }
+        }),
+        'Agent 示例任务'
+      );
       renderAgentTasks();
     });
   }

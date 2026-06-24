@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using SolidWorks.Interop.sldworks;
 using SolidWorks.Interop.swconst;
@@ -51,6 +52,84 @@ namespace SwAgentAddin
             {
                 _hindsightClient = new HindsightRagClient(config.Hindsight, WriteTrace);
             }
+        }
+
+        private MechPilotResult RouteAgentJobSubmit(MechPilotCommand cmd, string legacyCmd)
+        {
+            string jobType = "";
+            if (cmd.Payload.ContainsKey("job_type")) jobType = Convert.ToString(cmd.Payload["job_type"]);
+            else if (cmd.Payload.ContainsKey("task_type")) jobType = Convert.ToString(cmd.Payload["task_type"]);
+            else jobType = "material.properties.review";
+
+            var jobResult = Task.Run(() => _hermesClient.SubmitJobAsync(jobType, cmd.Payload))
+                .GetAwaiter().GetResult();
+            return BuildJobMechPilotResult(cmd.CommandId, legacyCmd, jobResult,
+                "Job 已提交到 Hermes 队列", "Hermes job 提交失败", "AGENT_JOB_SUBMIT_FAILED");
+        }
+
+        private MechPilotResult RouteAgentJobPoll(MechPilotCommand cmd, string legacyCmd)
+        {
+            string jobId = "";
+            if (cmd.Payload.ContainsKey("job_id")) jobId = Convert.ToString(cmd.Payload["job_id"]);
+            else if (cmd.Payload.ContainsKey("task_id")) jobId = Convert.ToString(cmd.Payload["task_id"]);
+
+            if (string.IsNullOrEmpty(jobId))
+                return MechPilotResult.FailResult(cmd.CommandId, "缺少 job_id", "MISSING_JOB_ID", legacyCmd);
+
+            var jobResult = Task.Run(() => _hermesClient.PollJobAsync(jobId))
+                .GetAwaiter().GetResult();
+            return BuildJobMechPilotResult(cmd.CommandId, legacyCmd, jobResult,
+                "Job 状态已获取", "Hermes job 轮询失败", "AGENT_JOB_POLL_FAILED");
+        }
+
+        private static MechPilotResult BuildJobMechPilotResult(string commandId, string legacyCmd,
+            Dictionary<string, object> jobResult, string okMessage, string failMessage, string errorCode)
+        {
+            bool success = jobResult != null && jobResult.ContainsKey("success") && Convert.ToBoolean(jobResult["success"]);
+            var data = new Dictionary<string, object>();
+            if (jobResult != null && jobResult.ContainsKey("data") && jobResult["data"] is Dictionary<string, object> inner)
+            {
+                foreach (var kv in inner) data[kv.Key] = kv.Value;
+            }
+            data["success"] = success;
+            if (jobResult != null && jobResult.ContainsKey("request_id")) data["request_id"] = jobResult["request_id"];
+            if (jobResult != null && jobResult.ContainsKey("offline")) data["offline"] = jobResult["offline"];
+
+            string message = success ? okMessage : failMessage;
+            if (!success && jobResult != null && jobResult.ContainsKey("error"))
+            {
+                if (jobResult["error"] is Dictionary<string, object> errObj && errObj.ContainsKey("message"))
+                    message = Convert.ToString(errObj["message"]);
+                else if (jobResult["error"] is Dictionary<string, string> errStr && errStr.ContainsKey("message"))
+                    message = errStr["message"];
+                else
+                    message = Convert.ToString(jobResult["error"]);
+                data["error"] = jobResult["error"];
+            }
+
+            return new MechPilotResult
+            {
+                CommandId = commandId,
+                Command = legacyCmd,
+                Ok = success,
+                Message = message,
+                ErrorCode = success ? null : errorCode,
+                Data = data
+            };
+        }
+
+        private static bool IsJobSubmitCommand(string feature, string action, string legacyCmd)
+        {
+            if (string.Equals(legacyCmd, "agent.job.submit", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(legacyCmd, "material.properties.review.submit", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return string.Equals(feature, "material.properties.review", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(action, "submit", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsJobPollCommand(string feature, string action, string legacyCmd)
+        {
+            return string.Equals(legacyCmd, "agent.job.poll", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -110,6 +189,9 @@ namespace SwAgentAddin
                     if (string.Equals(action, "poll", StringComparison.OrdinalIgnoreCase)) return "agent.task.poll";
                     if (string.Equals(action, "result", StringComparison.OrdinalIgnoreCase)) return "agent.task.result";
                 }
+                if (string.Equals(feature, "material.properties.review", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(action, "submit", StringComparison.OrdinalIgnoreCase))
+                    return "material.properties.review.submit";
             }
             if (string.Equals(executor, "local", StringComparison.OrdinalIgnoreCase))
             {
@@ -130,7 +212,9 @@ namespace SwAgentAddin
         {
             string feature = cmd.Feature ?? "";
             string action = cmd.Action ?? "";
-            string legacyCmd = RebuildLegacyCommand(feature, action, cmd.Executor ?? "");
+            string legacyCmd = string.IsNullOrEmpty(cmd.LegacyCommand)
+                ? RebuildLegacyCommand(feature, action, cmd.Executor ?? "")
+                : cmd.LegacyCommand;
 
             // ─── Local Toolbelt commands ───
             if (string.Equals(cmd.Executor, "local", StringComparison.OrdinalIgnoreCase))
@@ -257,6 +341,16 @@ namespace SwAgentAddin
 
             try
             {
+                // Agent job queue lifecycle
+                if (IsJobSubmitCommand(feature, action, legacyCmd))
+                {
+                    return RouteAgentJobSubmit(cmd, legacyCmd);
+                }
+                if (IsJobPollCommand(feature, action, legacyCmd))
+                {
+                    return RouteAgentJobPoll(cmd, legacyCmd);
+                }
+
                 // Agent task lifecycle
                 if (string.Equals(feature, "agent", StringComparison.OrdinalIgnoreCase))
                 {

@@ -15,6 +15,7 @@ namespace SwAgentAddin
         public string Feature { get; set; }
         public string Action { get; set; }
         public string Executor { get; set; }
+        public string LegacyCommand { get; set; }
         public MechPilotCommandTarget Target { get; set; }
         public Dictionary<string, object> Payload { get; set; } = new Dictionary<string, object>();
 
@@ -51,6 +52,7 @@ namespace SwAgentAddin
             if (dict.ContainsKey("command"))
             {
                 string legacyCmd = Convert.ToString(dict["command"]);
+                cmd.LegacyCommand = legacyCmd;
                 MapLegacyCommand(cmd, legacyCmd, dict);
             }
 
@@ -150,6 +152,18 @@ namespace SwAgentAddin
                     cmd.Source = "cockpit";
                     break;
                 // Agent task lifecycle
+                case "agent.job.submit":
+                    cmd.Feature = "agent"; cmd.Action = "submit"; cmd.Executor = "hermes";
+                    cmd.Source = "cockpit";
+                    break;
+                case "agent.job.poll":
+                    cmd.Feature = "agent"; cmd.Action = "poll"; cmd.Executor = "hermes";
+                    cmd.Source = "cockpit";
+                    break;
+                case "material.properties.review.submit":
+                    cmd.Feature = "material.properties.review"; cmd.Action = "submit"; cmd.Executor = "hermes";
+                    cmd.Source = "cockpit";
+                    break;
                 case "agent.task.submit":
                     cmd.Feature = "agent"; cmd.Action = "submit"; cmd.Executor = "hermes";
                     cmd.Source = "cockpit";
