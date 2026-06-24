@@ -76,6 +76,8 @@
     <!-- 图标（Ribbon 风格 — 首选） -->
     <None Include="assets\icons\mechpilot-ribbon-main-20.bmp" CopyToOutputDirectory="Always" />
     <None Include="assets\icons\mechpilot-ribbon-main-32.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-online-selection-20.bmp" CopyToOutputDirectory="Always" />
+    <None Include="assets\icons\mechpilot-online-selection-32.bmp" CopyToOutputDirectory="Always" />
     <None Include="assets\icons\mechpilot-ribbon-icons-16-20.bmp" CopyToOutputDirectory="Always" />
     <None Include="assets\icons\mechpilot-ribbon-icons-16-32.bmp" CopyToOutputDirectory="Always" />
     <!-- 图标（蓝图风格 — 备选） -->

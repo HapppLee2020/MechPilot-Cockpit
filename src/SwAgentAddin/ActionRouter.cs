@@ -68,7 +68,15 @@ namespace SwAgentAddin
                 if (string.IsNullOrEmpty(cmd.CommandId))
                     cmd.CommandId = "cmd-" + Guid.NewGuid().ToString("N").Substring(0, 8);
 
+                WriteTrace("route command_id=" + cmd.CommandId
+                    + " feature=" + (cmd.Feature ?? "")
+                    + " action=" + (cmd.Action ?? "")
+                    + " executor=" + (cmd.Executor ?? ""));
+
                 MechPilotResult result = Route(cmd);
+                WriteTrace("route result command_id=" + cmd.CommandId
+                    + " ok=" + result.Ok
+                    + " message=" + Shorten(result.Message, 160));
                 return result.ToJson();
             }
             catch (Exception ex)
@@ -95,12 +103,25 @@ namespace SwAgentAddin
                 if (string.Equals(feature, "drawing", StringComparison.OrdinalIgnoreCase)) return "ai.drawing.review";
                 if (string.Equals(feature, "selection", StringComparison.OrdinalIgnoreCase)) return "ai.selection.recommend";
                 if (string.Equals(feature, "design", StringComparison.OrdinalIgnoreCase)) return "ai.design.calculate";
+                if (string.Equals(feature, "node", StringComparison.OrdinalIgnoreCase)) return "ai.node.analyze";
                 if (string.Equals(feature, "agent", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.Equals(action, "submit", StringComparison.OrdinalIgnoreCase)) return "agent.task.submit";
                     if (string.Equals(action, "poll", StringComparison.OrdinalIgnoreCase)) return "agent.task.poll";
                     if (string.Equals(action, "result", StringComparison.OrdinalIgnoreCase)) return "agent.task.result";
                 }
+            }
+            if (string.Equals(executor, "local", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(feature, "selection", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(action, "node_selected", StringComparison.OrdinalIgnoreCase))
+                    return "node_selected";
+                if (string.Equals(feature, "properties", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(action, "check", StringComparison.OrdinalIgnoreCase))
+                    return "ai.props.check";
+                if (string.Equals(feature, "bom", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(action, "locate", StringComparison.OrdinalIgnoreCase))
+                    return "bom.locate";
             }
             return feature + "." + action;
         }
@@ -124,6 +145,10 @@ namespace SwAgentAddin
                         return ExecutePropertyFill(cmd);
                     case "properties.check":
                         return ExecutePropertyCheck(cmd);
+                    case "selection.node_selected":
+                        return RecordNodeSelection(cmd);
+                    case "bom.locate":
+                        return LocateBomTarget(cmd);
 
                     // LocalToolbelt P0 features
                     case "filename.parse_to_properties":
@@ -172,6 +197,7 @@ namespace SwAgentAddin
         {
             if (_hindsightClient == null)
             {
+                WriteTrace("Hindsight route skipped: client not initialized.");
                 return MechPilotResult.FailResult(cmd.CommandId,
                     "Hindsight RAG 未启用或未配置。请检查 config.json 中 hindsight.enabled = true",
                     "HINDSIGHT_OFFLINE", legacyCmd);
@@ -192,7 +218,13 @@ namespace SwAgentAddin
                         "MISSING_QUERY", legacyCmd);
 
                 int? topK = cmd.Payload.ContainsKey("top_k") ? Convert.ToInt32(cmd.Payload["top_k"]) : (int?)null;
-                var ragResult = _hindsightClient.Query(query, topK);
+                string bankOverride = cmd.Payload.ContainsKey("collection") ? Convert.ToString(cmd.Payload["collection"]) : null;
+                double? scoreThreshold = cmd.Payload.ContainsKey("score_threshold")
+                    ? Convert.ToDouble(cmd.Payload["score_threshold"])
+                    : (double?)null;
+                WriteTrace("Hindsight route query=" + Shorten(query, 80)
+                    + " top_k=" + (topK.HasValue ? topK.Value.ToString() : "default"));
+                var ragResult = _hindsightClient.Query(query, topK, bankOverride, scoreThreshold, cmd.Payload);
 
                 if (ragResult.ContainsKey("success") && Convert.ToBoolean(ragResult["success"]))
                 {
@@ -340,6 +372,46 @@ namespace SwAgentAddin
 
         #region Legacy Handlers
 
+        private MechPilotResult RecordNodeSelection(MechPilotCommand cmd)
+        {
+            string nodeId = "";
+            string name = "";
+            if (cmd.Payload != null)
+            {
+                if (cmd.Payload.ContainsKey("nodeId")) nodeId = Convert.ToString(cmd.Payload["nodeId"]);
+                if (cmd.Payload.ContainsKey("name")) name = Convert.ToString(cmd.Payload["name"]);
+            }
+
+            return MechPilotResult.OkResult(cmd.CommandId, "已同步当前选择: " + (string.IsNullOrEmpty(name) ? nodeId : name),
+                new Dictionary<string, object>
+                {
+                    ["node_id"] = nodeId ?? "",
+                    ["name"] = name ?? "",
+                    ["status"] = "selected"
+                },
+                "node_selected");
+        }
+
+        private MechPilotResult LocateBomTarget(MechPilotCommand cmd)
+        {
+            string nodeId = "";
+            string name = "";
+            if (cmd.Payload != null)
+            {
+                if (cmd.Payload.ContainsKey("nodeId")) nodeId = Convert.ToString(cmd.Payload["nodeId"]);
+                if (cmd.Payload.ContainsKey("name")) name = Convert.ToString(cmd.Payload["name"]);
+            }
+
+            return MechPilotResult.OkResult(cmd.CommandId, "BOM定位已接收，后续可联动BOM视图高亮目标。",
+                new Dictionary<string, object>
+                {
+                    ["node_id"] = nodeId ?? "",
+                    ["name"] = name ?? "",
+                    ["status"] = "pending_bom_highlight"
+                },
+                "bom.locate");
+        }
+
         private MechPilotResult Ping(MechPilotCommand cmd)
         {
             return MechPilotResult.OkResult(cmd.CommandId, "pong", new Dictionary<string, object>
@@ -402,6 +474,7 @@ namespace SwAgentAddin
 
         private static void WriteTrace(string message)
         {
+            try { SwAgentAddin.WriteTrace("[ActionRouter] " + message); } catch { }
             try { Debug.WriteLine("[ActionRouter] " + message); } catch { }
         }
     }

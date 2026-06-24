@@ -75,33 +75,46 @@ namespace SwAgentAddin
         /// <summary>
         /// 查询 Hindsight 知识库
         /// </summary>
-        public Dictionary<string, object> Query(string query, int? topK = null)
+        public Dictionary<string, object> Query(string query, int? topK = null, string bankOverride = null,
+            double? scoreThresholdOverride = null, Dictionary<string, object> extraPayload = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             string url = _config.BaseUrl.TrimEnd('/') + "/api/v1/query";
+            string bank = string.IsNullOrWhiteSpace(bankOverride) ? _config.Bank : bankOverride;
+            double scoreThreshold = scoreThresholdOverride ?? _config.ScoreThreshold;
 
             try
             {
                 var body = new Dictionary<string, object>
                 {
                     ["query"] = query,
-                    ["bank"] = _config.Bank,
+                    ["bank"] = bank,
                     ["top_k"] = topK ?? _config.TopK,
-                    ["score_threshold"] = _config.ScoreThreshold
+                    ["score_threshold"] = scoreThreshold
                 };
 
                 if (!string.IsNullOrEmpty(_config.SourceDbPath))
                     body["source_db_path"] = _config.SourceDbPath;
 
+                if (extraPayload != null)
+                {
+                    foreach (var kv in extraPayload)
+                    {
+                        if (!body.ContainsKey(kv.Key) && kv.Value != null)
+                            body[kv.Key] = kv.Value;
+                    }
+                }
+
                 string json = new JavaScriptSerializer().Serialize(body);
                 _log(string.Format("[Hindsight] query bank={0} top_k={1} threshold={2} q={3} url={4}",
-                    _config.Bank, topK ?? _config.TopK, _config.ScoreThreshold, Shorten(query, 60), url));
+                    bank, topK ?? _config.TopK, scoreThreshold, Shorten(query, 60), url));
 
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var request = new HttpRequestMessage(HttpMethod.Post, url);
+                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
                 if (!string.IsNullOrEmpty(_config.ApiKey))
-                    content.Headers.TryAddWithoutValidation("Authorization", "Bearer " + _config.ApiKey);
+                    request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + _config.ApiKey);
 
-                var response = _http.PostAsync(url, content).GetAwaiter().GetResult();
+                var response = _http.SendAsync(request).GetAwaiter().GetResult();
                 string result = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
                 sw.Stop();

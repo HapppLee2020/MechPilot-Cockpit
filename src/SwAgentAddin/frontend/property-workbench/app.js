@@ -106,6 +106,47 @@
     return null;
   }
 
+  function extractResultItems(result) {
+    var data = (result && result.data) || {};
+    var candidates = [
+      data.items,
+      data.results,
+      data.data && data.data.items,
+      data.data && data.data.results,
+      data.data && data.data.data && data.data.data.items,
+      data.data && data.data.data && data.data.data.results
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      if (Array.isArray(candidates[i])) return candidates[i];
+    }
+    return [];
+  }
+
+  function pick(obj, pascalKey, camelKey, snakeKey, fallback) {
+    obj = obj || {};
+    if (obj[pascalKey] != null) return obj[pascalKey];
+    if (obj[camelKey] != null) return obj[camelKey];
+    if (obj[snakeKey] != null) return obj[snakeKey];
+    return fallback;
+  }
+
+  function applyRuntimeConfig(runtimeConfig) {
+    if (!runtimeConfig) return;
+    var agent = runtimeConfig.agent_server || runtimeConfig.AgentServer || {};
+    var hindsight = runtimeConfig.hindsight || runtimeConfig.Hindsight || {};
+
+    state.settings.executionMode = pick(runtimeConfig, 'ExecutionMode', 'executionMode', 'execution_mode', state.settings.executionMode);
+    state.settings.hermesUrl = pick(agent, 'BaseUrl', 'baseUrl', 'base_url', state.settings.hermesUrl);
+    state.settings.contextMode = pick(agent, 'ContextModeDefault', 'contextModeDefault', 'context_mode_default', state.settings.contextMode);
+    state.settings.ragProvider = 'hindsight';
+    state.settings.ragDbPath = pick(hindsight, 'SourceDbPath', 'sourceDbPath', 'source_db_path', state.settings.ragDbPath);
+    state.settings.ragCollection = pick(hindsight, 'Bank', 'bank', 'bank', state.settings.ragCollection);
+    state.settings.ragTopK = Number(pick(hindsight, 'TopK', 'topK', 'top_k', state.settings.ragTopK)) || state.settings.ragTopK;
+    state.settings.ragScoreThreshold = Number(pick(hindsight, 'ScoreThreshold', 'scoreThreshold', 'score_threshold', state.settings.ragScoreThreshold));
+    if (isNaN(state.settings.ragScoreThreshold)) state.settings.ragScoreThreshold = 0.35;
+    state.ragOnline = !!pick(hindsight, 'Enabled', 'enabled', 'enabled', state.ragOnline);
+  }
+
   // ══════════════════════════════════════════════════════════
   //  Context 标准化
   // ══════════════════════════════════════════════════════════
@@ -184,6 +225,7 @@
 
     var summary = context.Summary || context.summary || null;
     var warnings = context.Warnings || context.warnings || [];
+    var runtimeConfig = context.RuntimeConfig || context.runtimeConfig || {};
 
     return {
       fileName: doc.Title || doc.title || table.TargetLabel || table.targetLabel || '(none)',
@@ -214,6 +256,7 @@
         readFailedCount: summary.ReadFailedCount != null ? summary.ReadFailedCount : (summary.readFailedCount || 0)
       } : null,
       _warnings: warnings,
+      _runtimeConfig: runtimeConfig,
       _isMock: false
     };
   }
@@ -225,6 +268,7 @@
     state.context = normalizeContext(window.MECHPILOT_MOCK_CONTEXT) || null;
     if (state.context) {
       state.settings.executionMode = state.context.mode || 'local';
+      applyRuntimeConfig(state.context._runtimeConfig);
       // 默认选中根节点
       state.selectedNode = state.context.tree;
       // 默认展开根节点和第一层
@@ -250,6 +294,7 @@
       receiveContext: function (context) {
         state.context = normalizeContext(context);
         if (state.context) {
+          applyRuntimeConfig(state.context._runtimeConfig);
           state.selectedNode = state.context.tree;
           state.expandedSet.clear();
           state.expandedSet.add(state.context.tree.id);
@@ -269,8 +314,7 @@
         var cmd = result.command || result.action || result.type;
         if (cmd === 'ai.material.search') {
           renderMaterialResults(result);
-          var count = result.data && result.data.items ? result.data.items.length : 
-                      result.data && result.data.results ? result.data.results.length : 0;
+          var count = extractResultItems(result).length;
           addAIMessage('system', '物料检索完成，共 ' + count + ' 条结果');
         } else {
           addAIMessage('system', result.message || JSON.stringify(result));
@@ -889,10 +933,7 @@
     }
 
     // 成功情况
-    var data = result.data || {};
-    var items = data.items || data.results || 
-                (data.data && data.data.items) || 
-                (data.data && data.data.results) || [];
+    var items = extractResultItems(result);
 
     if (!Array.isArray(items) || items.length === 0) {
       resultBox.innerHTML = '<p class="hint">未找到匹配的物料。</p>';

@@ -102,6 +102,18 @@ namespace SwAgentAddin
                     cmd.Feature = "properties"; cmd.Action = "check"; cmd.Executor = "local";
                     cmd.Source = "cockpit";
                     break;
+                case "ai.props.check":
+                    cmd.Feature = "properties"; cmd.Action = "check"; cmd.Executor = "local";
+                    cmd.Source = "cockpit";
+                    break;
+                case "node_selected":
+                    cmd.Feature = "selection"; cmd.Action = "node_selected"; cmd.Executor = "local";
+                    cmd.Source = "cockpit";
+                    break;
+                case "bom.locate":
+                    cmd.Feature = "bom"; cmd.Action = "locate"; cmd.Executor = "local";
+                    cmd.Source = "cockpit";
+                    break;
                 case "cockpit.ping":
                     cmd.Feature = "system"; cmd.Action = "ping"; cmd.Executor = "local";
                     cmd.Source = "cockpit";
@@ -131,6 +143,10 @@ namespace SwAgentAddin
                     break;
                 case "ai.assistant.chat":
                     cmd.Feature = "assistant"; cmd.Action = "chat"; cmd.Executor = "hermes";
+                    cmd.Source = "cockpit";
+                    break;
+                case "ai.node.analyze":
+                    cmd.Feature = "node"; cmd.Action = "analyze"; cmd.Executor = "hermes";
                     cmd.Source = "cockpit";
                     break;
                 // Agent task lifecycle

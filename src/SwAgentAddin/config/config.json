@@ -37,6 +37,7 @@
   "cockpit_prefer_webview2": true,
   "cockpit_fallback_to_winforms": true,
   "cockpit_schema_version": "mechpilot.cockpit.context.v1",
+  "online_selection_url": "https://xtalpi.aiforce.cloud/app/app_4k6beaevn9gub",
   "agent_server": {
     "provider": "hermes",
     "base_url": "http://127.0.0.1:8080",

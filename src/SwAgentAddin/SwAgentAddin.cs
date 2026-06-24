@@ -33,6 +33,8 @@ namespace SwAgentAddin
 
         private const string AddinTitle = "MechPilot";
         private const string CommandTabName = "MechPilot";
+        internal const string DefaultOnlineSelectionUrl = "https://xtalpi.aiforce.cloud/app/app_4k6beaevn9gub";
+        internal const string OnlineSelectionTaskPaneProgId = "SwAgentAddin.OnlineSelectionTaskPane";
         private const int CommandGroupId = 1001;
         private const int FirstMenuId = 0;
 
@@ -42,20 +44,21 @@ namespace SwAgentAddin
         private const int CmdAIAssistant = 1;
         private const int CmdAIDrawingReview = 2;
         private const int CmdAISelection = 3;
-        private const int CmdMaterialSearch = 4;
-        private const int CmdDesignCalc = 5;
+        private const int CmdOnlineSelection = 4;
+        private const int CmdMaterialSearch = 5;
+        private const int CmdDesignCalc = 6;
         // 本地工程工具区 (6-12)
-        private const int CmdPropertyFill = 6;
-        private const int CmdReadProperties = 7;
-        private const int CmdPropertyCheck = 8;
-        private const int CmdBomExport = 9;
-        private const int CmdBatchConvert = 10;
-        private const int CmdDrawingExport = 11;
-        private const int CmdPackageBackup = 12;
+        private const int CmdPropertyFill = 7;
+        private const int CmdReadProperties = 8;
+        private const int CmdPropertyCheck = 9;
+        private const int CmdBomExport = 10;
+        private const int CmdBatchConvert = 11;
+        private const int CmdDrawingExport = 12;
+        private const int CmdPackageBackup = 13;
         // 系统区 (13-15)
-        private const int CmdSettings = 13;
-        private const int CmdRulesConfig = 14;
-        private const int CmdAbout = 15;
+        private const int CmdSettings = 14;
+        private const int CmdRulesConfig = 15;
+        private const int CmdAbout = 16;
 
         #endregion
 
@@ -64,6 +67,7 @@ namespace SwAgentAddin
         private ISldWorks _swApp;
         private ICommandManager _cmdMgr;
         private ITaskpaneView _taskpaneView;
+        private OnlineSelectionTaskPane _onlineSelectionPane;
         private AddinConfig _config;
         private LocalPropertyRules _rules;
         private int _addinCookie;
@@ -188,6 +192,7 @@ namespace SwAgentAddin
             cmdGroup.AddCommandItem2("AI助手", -1, "打开 AICockpit 并展开 AI 面板", "AI助手", CmdAIAssistant, "SwCmd_AIAssistant", "", CmdAIAssistant, addItem);
             cmdGroup.AddCommandItem2("图纸审核", -1, "打开 AICockpit 图纸审核页面", "图纸审核", CmdAIDrawingReview, "SwCmd_AIDrawingReview", "", CmdAIDrawingReview, addItem);
             cmdGroup.AddCommandItem2("快速选型", -1, "打开 AICockpit 快速选型页面", "快速选型", CmdAISelection, "SwCmd_AISelection", "", CmdAISelection, addItem);
+            cmdGroup.AddCommandItem2("在线选型", -1, "打开 MechPilot 在线选型任务窗格", "在线选型", CmdOnlineSelection, "SwCmd_OnlineSelection", "", CmdOnlineSelection, addItem);
             cmdGroup.AddCommandItem2("物料检索", -1, "打开 AICockpit 物料检索页面", "物料检索", CmdMaterialSearch, "SwCmd_MaterialSearch", "", CmdMaterialSearch, addItem);
             cmdGroup.AddCommandItem2("设计计算", -1, "打开 AICockpit 设计计算页面", "设计计算", CmdDesignCalc, "SwCmd_DesignCalc", "", CmdDesignCalc, addItem);
 
@@ -277,10 +282,11 @@ namespace SwAgentAddin
                             cmdGroup.get_CommandID(CmdAIAssistant),
                             cmdGroup.get_CommandID(CmdAIDrawingReview),
                             cmdGroup.get_CommandID(CmdAISelection),
+                            cmdGroup.get_CommandID(CmdOnlineSelection),
                             cmdGroup.get_CommandID(CmdMaterialSearch),
                             cmdGroup.get_CommandID(CmdDesignCalc)
                         };
-                        int[] aiStyles = { textBelow, textBelow, textBelow, textBelow, textBelow, textBelow };
+                        int[] aiStyles = { textBelow, textBelow, textBelow, textBelow, textBelow, textBelow, textBelow };
                         boxAI.AddCommands(aiIds, aiStyles);
                     }
 
@@ -450,25 +456,48 @@ namespace SwAgentAddin
         {
             try
             {
-                WriteTrace("AddTaskPane: creating...");
-                _taskpaneView = _swApp.CreateTaskpaneView3(null, "MechPilot");
+                string iconPath = GetTaskPaneIconPath();
+                WriteTrace("AddTaskPane: creating with CreateTaskpaneView2... icon=" + iconPath);
+                _taskpaneView = _swApp.CreateTaskpaneView2(iconPath ?? "", "MechPilot 在线选型");
+                if (_taskpaneView == null)
+                {
+                    WriteTrace("AddTaskPane: CreateTaskpaneView2 returned null; trying CreateTaskpaneView3 without image list.");
+                    _taskpaneView = _swApp.CreateTaskpaneView3(null, "MechPilot 在线选型");
+                }
                 if (_taskpaneView != null)
                 {
                     string htmlPath = Path.Combine(GetAddinDirectory(), "frontend/taskpane.html");
                     if (!File.Exists(htmlPath))
                         File.WriteAllText(htmlPath, TaskpaneHtml.DefaultHtml, Encoding.UTF8);
 
-                    object control = _taskpaneView.AddControl("Shell.Explorer.2", "");
+                    object control = null;
+                    try
+                    {
+                        control = _taskpaneView.AddControl(OnlineSelectionTaskPaneProgId, "");
+                        _onlineSelectionPane = control as OnlineSelectionTaskPane;
+                        _onlineSelectionPane?.Initialize(GetOnlineSelectionUrl());
+                    }
+                    catch (Exception controlEx)
+                    {
+                        WriteTrace("AddTaskPane: WebView2 pane control failed, falling back to browser control: " + controlEx);
+                    }
+
+                    if (control == null)
+                        control = _taskpaneView.AddControl("Shell.Explorer.2", "");
+
                     if (control != null)
                     {
-                        dynamic browser = control;
-                        browser.Navigate("file:///" + htmlPath.Replace("\\", "/"));
+                        if (_onlineSelectionPane == null)
+                        {
+                            dynamic browser = control;
+                            browser.Navigate(GetOnlineSelectionUrl());
+                        }
                     }
-                    WriteTrace("AddTaskPane: created with HTML panel.");
+                    WriteTrace("AddTaskPane: created with panel. control=" + (control == null ? "null" : control.GetType().FullName));
                 }
                 else
                 {
-                    WriteTrace("AddTaskPane: CreateTaskpaneView3 returned null.");
+                    WriteTrace("AddTaskPane: CreateTaskpaneView2/CreateTaskpaneView3 returned null.");
                 }
             }
             catch (Exception ex)
@@ -485,6 +514,7 @@ namespace SwAgentAddin
                 {
                     _taskpaneView.DeleteView();
                     _taskpaneView = null;
+                    _onlineSelectionPane = null;
                     WriteTrace("RemoveTaskPane: deleted.");
                 }
             }
@@ -629,12 +659,12 @@ namespace SwAgentAddin
 
         public void SwCmd_AIAssistant()
         {
-            OpenCockpitPage("ai-assistant");
+            OpenCockpitPage("assistant");
         }
 
         public void SwCmd_AIDrawingReview()
         {
-            OpenCockpitPage("drawing-review");
+            OpenCockpitPage("drawing");
         }
 
         public void SwCmd_AISelection()
@@ -642,14 +672,19 @@ namespace SwAgentAddin
             OpenCockpitPage("selection");
         }
 
+        public void SwCmd_OnlineSelection()
+        {
+            ShowOnlineSelectionTaskPane();
+        }
+
         public void SwCmd_MaterialSearch()
         {
-            OpenCockpitPage("material-search");
+            OpenCockpitPage("material");
         }
 
         public void SwCmd_DesignCalc()
         {
-            OpenCockpitPage("design-calc");
+            OpenCockpitPage("design");
         }
 
         // ── 本地工程工具区回调 ──
@@ -727,12 +762,14 @@ namespace SwAgentAddin
                 {
                     _cockpitForm.BringToFront();
                     _cockpitForm.WindowState = FormWindowState.Maximized;
+                    _cockpitForm.NavigatePage(page);
                     return;
                 }
 
                 _cockpitForm = new CockpitForm(_config, BuildCockpitContext, HandleCockpitCommand);
                 _cockpitForm.FormClosed += (s, e) => { _cockpitForm = null; };
                 _cockpitForm.Show();
+                _cockpitForm.NavigatePage(page);
                 WriteTrace("OpenCockpitPage: " + page);
             }
             catch (Exception ex)
@@ -2160,6 +2197,113 @@ namespace SwAgentAddin
         return comp?.Name2 ?? Guid.NewGuid().ToString();
     }
 
+    private static string SafeCompInstanceKey(IComponent2 comp)
+    {
+        try
+        {
+            string name = comp?.Name2;
+            if (!string.IsNullOrEmpty(name)) return name;
+        }
+
+        catch { }
+        return SafeCompFileKey(comp);
+    }
+
+    private void ShowOnlineSelectionTaskPane()
+    {
+        try
+        {
+            string url = GetOnlineSelectionUrl();
+            if (_taskpaneView == null)
+                AddTaskPane();
+
+            if (_taskpaneView == null)
+            {
+                SafeMessage("SolidWorks 未能创建右侧在线选型任务窗格。\n\n请确认右侧任务窗格没有被隐藏，然后重新加载 MechPilot。", MessageBoxIcon.Warning);
+                return;
+            }
+
+            _taskpaneView?.ShowView();
+            if (_onlineSelectionPane != null)
+                _onlineSelectionPane.Initialize(url);
+            WriteTrace("ShowOnlineSelectionTaskPane: " + url);
+        }
+        catch (Exception ex)
+        {
+            WriteTrace("ShowOnlineSelectionTaskPane exception: " + ex);
+            SafeMessage("在线选型任务窗格打开失败。\n\n" + ex.Message, MessageBoxIcon.Warning);
+        }
+    }
+
+    private string GetOnlineSelectionUrl()
+    {
+        return NormalizeOnlineSelectionUrl(_config?.OnlineSelectionUrl);
+    }
+
+    internal static string NormalizeOnlineSelectionUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return DefaultOnlineSelectionUrl;
+
+        string trimmed = url.Trim();
+        if (!trimmed.Contains("://"))
+            trimmed = "https://" + trimmed;
+
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out Uri uri) &&
+            (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            return uri.AbsoluteUri;
+        }
+
+        return DefaultOnlineSelectionUrl;
+    }
+
+    private static string GetTaskPaneIconPath()
+    {
+        string dir = GetAddinDirectory();
+        string[] candidates =
+        {
+            Path.Combine(dir, "assets", "icons", "mechpilot-online-selection-32.bmp"),
+            Path.Combine(dir, "assets", "icons", "mechpilot-online-selection-20.bmp"),
+            Path.Combine(dir, "assets", "icons", "mechpilot-ribbon-main-32.bmp"),
+            Path.Combine(dir, "assets", "icons", "mechpilot-ribbon-main-20.bmp"),
+            Path.Combine(dir, "assets", "icons", "mechpilot-blueprint-main-20.bmp"),
+            Path.Combine(dir, "assets", "icons", "mechpilot-main-20.bmp")
+        };
+
+        foreach (string path in candidates)
+        {
+            if (File.Exists(path))
+                return path;
+        }
+
+        WriteTrace("GetTaskPaneIconPath: no icon found, CreateTaskpaneView3 will use null icon.");
+        return null;
+    }
+
+    internal static void OpenOnlineSelectionInBrowser(string url)
+    {
+        url = NormalizeOnlineSelectionUrl(url);
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "无法打开在线选型页面。\n\n" + url + "\n\n" + ex.Message,
+                "MechPilot",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+    }
+
     // ═══════════════════════════════════════════════════════
     //  BuildCockpitContext — 主入口
     // ═══════════════════════════════════════════════════════
@@ -2188,7 +2332,8 @@ namespace SwAgentAddin
                     ExecutionMode = _config?.ExecutionMode ?? "local",
                     MachineName = System.Environment.MachineName
                 },
-                Capabilities = new List<string> { "read", "write", "check", "review", "cockpit" }
+                Capabilities = new List<string> { "read", "write", "check", "review", "cockpit" },
+                RuntimeConfig = BuildCockpitRuntimeConfig()
             };
 
             // ── 无文档场景 ──
@@ -2307,7 +2452,7 @@ namespace SwAgentAddin
             WriteTrace(string.Format(
                 "BuildCockpitContext: type={0} title={1} rows={2} treeNodes={3} warnings={4} elapsed={5:F0}ms",
                 docTypeName, context.ActiveDocument.Title, rows.Count,
-                context.AssemblyTree?.Count ?? 0, warnings.Count, sw.Elapsed.TotalMilliseconds));
+                CountCockpitTreeNodes(context.AssemblyTree), warnings.Count, sw.Elapsed.TotalMilliseconds));
 
             return SerializeCockpitContext(context);
         }
@@ -2499,7 +2644,7 @@ namespace SwAgentAddin
 
                 IComponent2 parent = null;
                 try { parent = (IComponent2)comp.GetParent(); } catch { }
-                string parentKey = parent != null ? SafeCompFileKey(parent) : "__ROOT__";
+                string parentKey = parent != null ? SafeCompInstanceKey(parent) : "__ROOT__";
                 if (!childrenMap.ContainsKey(parentKey))
                     childrenMap[parentKey] = new List<IComponent2>();
                 childrenMap[parentKey].Add(comp);
@@ -2578,7 +2723,7 @@ namespace SwAgentAddin
                 };
 
                 // Recurse into children
-                string myKey = SafeCompFileKey(comp);
+                string myKey = SafeCompInstanceKey(comp);
                 List<IComponent2> children;
                 if (childrenMap.TryGetValue(myKey, out children))
                 {
@@ -2610,6 +2755,18 @@ namespace SwAgentAddin
         }
 
         return result;
+    }
+
+    private static int CountCockpitTreeNodes(List<CockpitTreeNode> nodes)
+    {
+        if (nodes == null) return 0;
+        int count = 0;
+        foreach (var node in nodes)
+        {
+            count++;
+            count += CountCockpitTreeNodes(node.Children);
+        }
+        return count;
     }
 
     /// <summary>
@@ -2715,11 +2872,253 @@ namespace SwAgentAddin
         }
     }
 
+    private Dictionary<string, object> BuildCockpitRuntimeConfig()
+    {
+        var hindsight = _config?.Hindsight ?? new HindsightConfig();
+        var agent = _config?.AgentServer ?? new AgentServerConfig();
+        return new Dictionary<string, object>
+        {
+            ["execution_mode"] = _config?.ExecutionMode ?? "local",
+            ["cockpit_url_mode"] = _config?.CockpitUrlMode ?? "local",
+            ["agent_server"] = new Dictionary<string, object>
+            {
+                ["provider"] = agent.Provider ?? "hermes",
+                ["base_url"] = agent.BaseUrl ?? "",
+                ["auth_mode"] = string.IsNullOrEmpty(agent.AuthMode) ? "none" : agent.AuthMode,
+                ["context_mode_default"] = agent.ContextModeDefault ?? "summary",
+                ["timeout_seconds"] = agent.TimeoutSeconds,
+                ["poll_interval_seconds"] = agent.PollIntervalSeconds
+            },
+            ["hindsight"] = new Dictionary<string, object>
+            {
+                ["enabled"] = hindsight.Enabled,
+                ["base_url"] = hindsight.BaseUrl ?? "",
+                ["bank"] = hindsight.Bank ?? "",
+                ["source_db_path"] = hindsight.SourceDbPath ?? "",
+                ["top_k"] = hindsight.TopK,
+                ["score_threshold"] = hindsight.ScoreThreshold,
+                ["timeout_seconds"] = hindsight.TimeoutSeconds,
+                ["explain_with_hermes"] = hindsight.ExplainWithHermes
+            }
+        };
+    }
+
     #endregion
 
 
 
     
+    }
+
+    [ComVisible(true)]
+    [Guid("4A9EB945-6F2A-4C3E-9B39-3B6B8D3E2C4F")]
+    [ProgId(SwAgentAddin.OnlineSelectionTaskPaneProgId)]
+    [ClassInterface(ClassInterfaceType.AutoDual)]
+    public class OnlineSelectionTaskPane : UserControl
+    {
+        private readonly Panel _header;
+        private readonly Label _status;
+        private readonly Button _reloadButton;
+        private readonly Button _externalButton;
+        private readonly ToolTip _toolTip;
+        private WebView2 _webView;
+        private string _url = SwAgentAddin.DefaultOnlineSelectionUrl;
+        private bool _initializing;
+        private bool _ready;
+
+        public OnlineSelectionTaskPane()
+        {
+            Dock = DockStyle.Fill;
+            BackColor = Color.White;
+
+            _header = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 44,
+                Padding = new Padding(10, 7, 8, 7),
+                BackColor = Color.FromArgb(247, 248, 250)
+            };
+
+            var title = new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = "MechPilot 在线选型",
+                AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold)
+            };
+
+            _externalButton = new Button
+            {
+                Dock = DockStyle.Right,
+                Width = 44,
+                Image = CreateHeaderIcon("external"),
+                ImageAlign = ContentAlignment.MiddleCenter,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            StyleHeaderButton(_externalButton);
+            _externalButton.Click += (s, e) => SwAgentAddin.OpenOnlineSelectionInBrowser(_url);
+
+            _reloadButton = new Button
+            {
+                Dock = DockStyle.Right,
+                Width = 44,
+                Image = CreateHeaderIcon("reload"),
+                ImageAlign = ContentAlignment.MiddleCenter,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            StyleHeaderButton(_reloadButton);
+            _reloadButton.Click += (s, e) => NavigateOnlineSelection();
+
+            _toolTip = new ToolTip
+            {
+                AutomaticDelay = 300,
+                ReshowDelay = 100,
+                ShowAlways = true
+            };
+            _toolTip.SetToolTip(_externalButton, "浏览器打开");
+            _toolTip.SetToolTip(_reloadButton, "刷新");
+
+            _header.Controls.Add(title);
+            _header.Controls.Add(_externalButton);
+            _header.Controls.Add(_reloadButton);
+
+            _status = new Label
+            {
+                Dock = DockStyle.Bottom,
+                Height = 26,
+                Padding = new Padding(10, 0, 10, 0),
+                Text = "正在准备在线选型页面...",
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Color.FromArgb(78, 89, 105),
+                BackColor = Color.FromArgb(247, 248, 250)
+            };
+
+            Controls.Add(_status);
+            Controls.Add(_header);
+            Load += (s, e) => NavigateOnlineSelection();
+        }
+
+        private static void StyleHeaderButton(Button button)
+        {
+            button.Margin = new Padding(4, 0, 0, 0);
+            button.TabStop = false;
+            button.FlatAppearance.BorderColor = Color.FromArgb(196, 204, 214);
+            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(232, 244, 255);
+            button.FlatAppearance.MouseDownBackColor = Color.FromArgb(209, 233, 255);
+        }
+
+        private static Bitmap CreateHeaderIcon(string kind)
+        {
+            var bmp = new Bitmap(18, 18);
+            using (Graphics g = Graphics.FromImage(bmp))
+            using (var pen = new Pen(Color.FromArgb(31, 41, 55), 1.8F))
+            using (var accent = new Pen(Color.FromArgb(13, 148, 136), 2.2F))
+            using (var accentBrush = new SolidBrush(Color.FromArgb(13, 148, 136)))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+
+                if (kind == "reload")
+                {
+                    g.DrawArc(accent, 3, 3, 12, 12, 35, 280);
+                    g.FillPolygon(accentBrush, new[]
+                    {
+                        new PointF(13.4F, 2.2F),
+                        new PointF(16.2F, 5.7F),
+                        new PointF(11.8F, 6.2F)
+                    });
+                }
+                else
+                {
+                    g.DrawRectangle(pen, 3.2F, 6.2F, 8.6F, 8.6F);
+                    g.DrawLine(accent, 8.2F, 9.8F, 14.6F, 3.4F);
+                    g.DrawLine(accent, 10.6F, 3.3F, 14.7F, 3.3F);
+                    g.DrawLine(accent, 14.7F, 3.3F, 14.7F, 7.4F);
+                }
+            }
+            return bmp;
+        }
+
+        public void Initialize(string url)
+        {
+            _url = SwAgentAddin.NormalizeOnlineSelectionUrl(url);
+            NavigateOnlineSelection();
+        }
+
+        public async void NavigateOnlineSelection()
+        {
+            try
+            {
+                if (_initializing) return;
+
+                if (_webView == null)
+                {
+                    _initializing = true;
+                    _status.Text = "正在初始化 WebView2...";
+                    _webView = new WebView2
+                    {
+                        Dock = DockStyle.Fill,
+                        CreationProperties = new CoreWebView2CreationProperties
+                        {
+                            UserDataFolder = Path.Combine(
+                                SwAgentAddin.GetAddinDirectory(),
+                                "online-selection-cache")
+                        }
+                    };
+                    Controls.Add(_webView);
+                    Controls.SetChildIndex(_webView, 1);
+                    await _webView.EnsureCoreWebView2Async();
+                    _webView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
+                    _ready = true;
+                    _initializing = false;
+                }
+
+                if (_ready && _webView.CoreWebView2 != null)
+                {
+                    _status.Text = "正在打开在线选型...";
+                    _webView.CoreWebView2.Navigate(_url);
+                }
+            }
+            catch (Exception ex)
+            {
+                _initializing = false;
+                _status.Text = "WebView2 打开失败，可使用浏览器打开。";
+                SwAgentAddin.WriteTrace("OnlineSelectionTaskPane NavigateOnlineSelection exception: " + ex);
+                MessageBox.Show(
+                    "在线选型页面暂时无法在任务窗格中打开。\n\n可以点击“浏览器打开”继续使用。\n\n" + ex.Message,
+                    "MechPilot 在线选型",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+        }
+
+        private void OnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            _status.Text = e.IsSuccess
+                ? "在线选型页面已加载。"
+                : "页面加载失败，可刷新或使用浏览器打开。";
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                try
+                {
+                    if (_webView?.CoreWebView2 != null)
+                        _webView.CoreWebView2.NavigationCompleted -= OnNavigationCompleted;
+                    _toolTip?.Dispose();
+                    _webView?.Dispose();
+                }
+                catch { }
+            }
+            base.Dispose(disposing);
+        }
     }
 
     #region CockpitForm — WebView2 Agent驾驶舱窗口
@@ -2735,6 +3134,8 @@ namespace SwAgentAddin
         private readonly Func<string, string> _handleCommand;
         private WebView2 _webView;
         private Rectangle _normalBounds = Rectangle.Empty;
+        private string _pendingPage;
+        private bool _pageLoaded;
 
         [DllImport("user32.dll")]
         private static extern bool ReleaseCapture();
@@ -2782,6 +3183,13 @@ namespace SwAgentAddin
                 SwAgentAddin.WriteTrace("CockpitForm constructor: WebView2 control creation failed: " + ex);
                 throw;
             }
+        }
+
+        public void NavigatePage(string pageId)
+        {
+            if (string.IsNullOrWhiteSpace(pageId)) return;
+            _pendingPage = pageId.Trim();
+            TryNavigatePendingPage();
         }
 
         // Let Windows treat the HTML top bar like a native title bar.
@@ -2866,6 +3274,7 @@ namespace SwAgentAddin
             // Navigate to cockpit URL
             string url = GetCockpitUrl();
             SwAgentAddin.WriteTrace("CockpitForm: navigating to " + url);
+            _pageLoaded = false;
             _webView.CoreWebView2.Navigate(url);
 
             // Wait for page load, then inject context
@@ -2875,6 +3284,7 @@ namespace SwAgentAddin
         private void OnNavigationCompleted(object sender, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs e)
         {
             if (!e.IsSuccess) return;
+            _pageLoaded = true;
 
             try
             {
@@ -2887,11 +3297,39 @@ namespace SwAgentAddin
                         SwAgentAddin.WriteTrace("CockpitForm: context injection script failed: " + task.Exception.GetBaseException().Message);
                 });
                 SwAgentAddin.WriteTrace("CockpitForm: context injected (" + contextJson.Length + " chars)");
+                TryNavigatePendingPage();
             }
             catch (Exception ex)
             {
                 SwAgentAddin.WriteTrace("CockpitForm: context injection failed: " + ex.Message);
             }
+        }
+
+        private void TryNavigatePendingPage()
+        {
+            if (string.IsNullOrWhiteSpace(_pendingPage)) return;
+            if (_webView?.CoreWebView2 == null) return;
+            if (!_pageLoaded) return;
+
+            string page = _pendingPage;
+            _pendingPage = null;
+            string escaped = EscapeForJsInjection(page);
+            string script =
+                "if (window.MechPilot && window.MechPilot.navigate_page) { " +
+                "window.MechPilot.navigate_page('" + escaped + "'); }";
+            _webView.CoreWebView2.ExecuteScriptAsync(script).ContinueWith(task =>
+            {
+                if (task.IsFaulted && task.Exception != null)
+                {
+                    _pendingPage = page;
+                    SwAgentAddin.WriteTrace("CockpitForm: page navigation failed: " +
+                        task.Exception.GetBaseException().Message);
+                }
+                else
+                {
+                    SwAgentAddin.WriteTrace("CockpitForm: navigated page " + page);
+                }
+            });
         }
 
         private void OnWebMessageReceived(object sender, Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs e)
@@ -3151,6 +3589,7 @@ namespace SwAgentAddin
         public bool CockpitPreferWebview2 { get; set; } = true;
         public bool CockpitFallbackToWinforms { get; set; } = true;
         public string CockpitSchemaVersion { get; set; } = "mechpilot.cockpit.context.v1";
+        public string OnlineSelectionUrl { get; set; } = SwAgentAddin.DefaultOnlineSelectionUrl;
 
         // Agent Server / Hermes (Agent S)
         public AgentServerConfig AgentServer { get; set; } = new AgentServerConfig();
@@ -3248,6 +3687,8 @@ namespace SwAgentAddin
                 config.CockpitFallbackToWinforms = Convert.ToBoolean(dict["cockpit_fallback_to_winforms"]);
             if (dict.ContainsKey("cockpit_schema_version"))
                 config.CockpitSchemaVersion = Convert.ToString(dict["cockpit_schema_version"]);
+            if (dict.ContainsKey("online_selection_url"))
+                config.OnlineSelectionUrl = Convert.ToString(dict["online_selection_url"]);
 
             // Agent Server (Hermes)
             if (dict.ContainsKey("agent_server"))
@@ -3305,6 +3746,7 @@ namespace SwAgentAddin
             dict["cockpit_prefer_webview2"] = CockpitPreferWebview2;
             dict["cockpit_fallback_to_winforms"] = CockpitFallbackToWinforms;
             dict["cockpit_schema_version"] = CockpitSchemaVersion;
+            dict["online_selection_url"] = OnlineSelectionUrl;
 
             // Agent Server (Hermes)
             if (AgentServer != null) dict["agent_server"] = AgentServer.ToDict();
@@ -3353,6 +3795,7 @@ namespace SwAgentAddin
         public CockpitPropertyTable PropertyTable { get; set; }
         public CockpitSummaryInfo Summary { get; set; }
         public List<string> Capabilities { get; set; } = new List<string>();
+        public Dictionary<string, object> RuntimeConfig { get; set; } = new Dictionary<string, object>();
         public List<CockpitWarning> Warnings { get; set; } = new List<CockpitWarning>();
     }
 
