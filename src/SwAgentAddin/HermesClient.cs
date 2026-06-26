@@ -78,7 +78,7 @@ namespace SwAgentAddin
     }
 
     /// <summary>
-    /// Hermes Agent 客户端 — 同步 invoke / 异步 task submit+poll+result
+    /// Hermes Agent 客户端 — 异步 invoke / task / job
     /// </summary>
     internal class HermesClient
     {
@@ -95,9 +95,9 @@ namespace SwAgentAddin
         }
 
         /// <summary>
-        /// 同步 invoke — 用于简单问答、ping 等
+        /// 异步 invoke — 用于简单问答、ping 等
         /// </summary>
-        public string InvokeAgent(string action, object payload, string contextMode = null)
+        public async Task<string> InvokeAgentAsync(string action, object payload, string contextMode = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             string url = _server.BaseUrl.TrimEnd('/') + _server.InvokeEndpoint;
@@ -142,31 +142,27 @@ namespace SwAgentAddin
 
                 _log(string.Format("[Hermes] invoke action={0} req={1} url={2}", action, requestId, url));
 
-                // Run HTTP on background thread to avoid blocking SolidWorks UI
-                return System.Threading.Tasks.Task.Run(() =>
+                using (var request = new HttpRequestMessage(HttpMethod.Post, url))
                 {
-                    using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+                    request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                    AddAuthHeader(request);
+                    var response = await _http.SendAsync(request).ConfigureAwait(false);
+                    string httpResult = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                    sw.Stop();
+                    _log(string.Format("[Hermes] invoke action={0} req={1} status={2} elapsed={3:F0}ms",
+                        action, requestId, (int)response.StatusCode, sw.Elapsed.TotalMilliseconds));
+
+                    if (response.IsSuccessStatusCode)
                     {
-                        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-                        AddAuthHeader(request);
-                        var response = _http.SendAsync(request).GetAwaiter().GetResult();
-                        string httpResult = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-
-                        sw.Stop();
-                        _log(string.Format("[Hermes] invoke action={0} req={1} status={2} elapsed={3:F0}ms",
-                            action, requestId, (int)response.StatusCode, sw.Elapsed.TotalMilliseconds));
-
-                        if (response.IsSuccessStatusCode)
-                        {
-                            if (isOpenAiFormat)
-                                return ConvertOpenAiResultToMechPilot(httpResult, action, requestId);
-                            return httpResult;
-                        }
-
-                        return MakeOfflineResult(action, requestId,
-                            string.Format("Hermes returned {0}: {1}", (int)response.StatusCode, Shorten(httpResult, 200)));
+                        if (isOpenAiFormat)
+                            return ConvertOpenAiResultToMechPilot(httpResult, action, requestId);
+                        return httpResult;
                     }
-                }).GetAwaiter().GetResult();
+
+                    return MakeOfflineResult(action, requestId,
+                        string.Format("Hermes returned {0}: {1}", (int)response.StatusCode, Shorten(httpResult, 200)));
+                }
             }
             catch (Exception ex)
             {
@@ -179,9 +175,18 @@ namespace SwAgentAddin
         }
 
         /// <summary>
-        /// 长任务：提交任务，返回 task_id
+        /// 兼容旧调用：同步包装（仅用于非 STA 场景）
         /// </summary>
-        public Dictionary<string, object> SubmitTask(string taskType, object payload, string contextMode = null)
+        [Obsolete("Use InvokeAgentAsync instead to avoid blocking STA thread")]
+        public string InvokeAgent(string action, object payload, string contextMode = null)
+        {
+            return Task.Run(() => InvokeAgentAsync(action, payload, contextMode)).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// 异步长任务：提交任务，返回 task_id
+        /// </summary>
+        public async Task<Dictionary<string, object>> SubmitTaskAsync(string taskType, object payload, string contextMode = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             string url = _server.BaseUrl.TrimEnd('/') + _server.TaskEndpoint;
@@ -210,32 +215,31 @@ namespace SwAgentAddin
                 {
                     request.Content = new StringContent(json, Encoding.UTF8, "application/json");
                     AddAuthHeader(request);
-                    var response = _http.SendAsync(request).GetAwaiter().GetResult();
-                    string result = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    var response = await _http.SendAsync(request).ConfigureAwait(false);
+                    string result = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
-                sw.Stop();
-                _log(string.Format("[Hermes] submit task_type={0} req={1} status={2} elapsed={3:F0}ms",
-                    taskType, requestId, (int)response.StatusCode, sw.Elapsed.TotalMilliseconds));
+                    sw.Stop();
+                    _log(string.Format("[Hermes] submit task_type={0} req={1} status={2} elapsed={3:F0}ms",
+                        taskType, requestId, (int)response.StatusCode, sw.Elapsed.TotalMilliseconds));
 
-                if (response.IsSuccessStatusCode)
-                {
-                    var serializer = new JavaScriptSerializer();
-                    var parsed = serializer.Deserialize<Dictionary<string, object>>(result);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var parsed = DeserializeDict(result);
+                        return new Dictionary<string, object>
+                        {
+                            ["success"] = true,
+                            ["request_id"] = requestId,
+                            ["task_id"] = GetString(parsed, "task_id"),
+                            ["raw"] = result
+                        };
+                    }
+
                     return new Dictionary<string, object>
                     {
-                        ["success"] = true,
+                        ["success"] = false,
                         ["request_id"] = requestId,
-                        ["task_id"] = parsed != null && parsed.ContainsKey("task_id") ? parsed["task_id"] : "",
-                        ["raw"] = result
+                        ["error"] = string.Format("Hermes returned {0}: {1}", (int)response.StatusCode, Shorten(result, 200))
                     };
-                }
-
-                return new Dictionary<string, object>
-                {
-                    ["success"] = false,
-                    ["request_id"] = requestId,
-                    ["error"] = string.Format("Hermes returned {0}: {1}", (int)response.StatusCode, Shorten(result, 200))
-                };
                 }
             }
             catch (Exception ex)
@@ -250,6 +254,15 @@ namespace SwAgentAddin
                     ["error"] = string.Format("Hermes offline or submit failed: {0}", ex.Message)
                 };
             }
+        }
+
+        /// <summary>
+        /// 兼容旧调用：同步包装
+        /// </summary>
+        [Obsolete("Use SubmitTaskAsync instead to avoid blocking STA thread")]
+        public Dictionary<string, object> SubmitTask(string taskType, object payload, string contextMode = null)
+        {
+            return Task.Run(() => SubmitTaskAsync(taskType, payload, contextMode)).GetAwaiter().GetResult();
         }
 
         /// <summary>
@@ -413,9 +426,9 @@ namespace SwAgentAddin
         }
 
         /// <summary>
-        /// 轮询任务状态
+        /// 异步轮询任务状态
         /// </summary>
-        public Dictionary<string, object> PollTaskStatus(string taskId)
+        public async Task<Dictionary<string, object>> PollTaskStatusAsync(string taskId)
         {
             string url = _server.BaseUrl.TrimEnd('/') +
                 _server.StatusEndpointTemplate.Replace("{task_id}", taskId);
@@ -423,18 +436,17 @@ namespace SwAgentAddin
             try
             {
                 _log(string.Format("[Hermes] poll task_id={0} url={1}", taskId, url));
-                var response = _http.GetAsync(url).GetAwaiter().GetResult();
-                string result = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                var response = await _http.GetAsync(url).ConfigureAwait(false);
+                string result = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    var serializer = new JavaScriptSerializer();
-                    var parsed = serializer.Deserialize<Dictionary<string, object>>(result);
+                    var parsed = DeserializeDict(result);
                     return new Dictionary<string, object>
                     {
                         ["success"] = true,
                         ["task_id"] = taskId,
-                        ["status"] = parsed != null && parsed.ContainsKey("status") ? parsed["status"] : "unknown",
+                        ["status"] = GetValue(parsed, "status", "unknown"),
                         ["raw"] = result
                     };
                 }
@@ -459,9 +471,18 @@ namespace SwAgentAddin
         }
 
         /// <summary>
-        /// 获取任务结果
+        /// 兼容旧调用：同步包装
         /// </summary>
-        public Dictionary<string, object> GetTaskResult(string taskId)
+        [Obsolete("Use PollTaskStatusAsync instead to avoid blocking STA thread")]
+        public Dictionary<string, object> PollTaskStatus(string taskId)
+        {
+            return Task.Run(() => PollTaskStatusAsync(taskId)).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// 异步获取任务结果
+        /// </summary>
+        public async Task<Dictionary<string, object>> GetTaskResultAsync(string taskId)
         {
             string url = _server.BaseUrl.TrimEnd('/') +
                 _server.ResultEndpointTemplate.Replace("{task_id}", taskId);
@@ -469,13 +490,12 @@ namespace SwAgentAddin
             try
             {
                 _log(string.Format("[Hermes] result task_id={0} url={1}", taskId, url));
-                var response = _http.GetAsync(url).GetAwaiter().GetResult();
-                string result = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                var response = await _http.GetAsync(url).ConfigureAwait(false);
+                string result = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    var serializer = new JavaScriptSerializer();
-                    var parsed = serializer.Deserialize<Dictionary<string, object>>(result);
+                    var parsed = DeserializeDict(result);
                     return new Dictionary<string, object>
                     {
                         ["success"] = true,
@@ -502,6 +522,15 @@ namespace SwAgentAddin
                     ["error"] = string.Format("Hermes offline or get-result failed: {0}", ex.Message)
                 };
             }
+        }
+
+        /// <summary>
+        /// 兼容旧调用：同步包装
+        /// </summary>
+        [Obsolete("Use GetTaskResultAsync instead to avoid blocking STA thread")]
+        public Dictionary<string, object> GetTaskResult(string taskId)
+        {
+            return Task.Run(() => GetTaskResultAsync(taskId)).GetAwaiter().GetResult();
         }
 
         private void AddAuthHeader(StringContent content)

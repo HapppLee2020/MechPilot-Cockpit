@@ -54,20 +54,19 @@ namespace SwAgentAddin
             }
         }
 
-        private MechPilotResult RouteAgentJobSubmit(MechPilotCommand cmd, string legacyCmd)
+        private async Task<MechPilotResult> RouteAgentJobSubmitAsync(MechPilotCommand cmd, string legacyCmd)
         {
             string jobType = "";
             if (cmd.Payload.ContainsKey("job_type")) jobType = Convert.ToString(cmd.Payload["job_type"]);
             else if (cmd.Payload.ContainsKey("task_type")) jobType = Convert.ToString(cmd.Payload["task_type"]);
             else jobType = "material.properties.review";
 
-            var jobResult = Task.Run(() => _hermesClient.SubmitJobAsync(jobType, cmd.Payload))
-                .GetAwaiter().GetResult();
+            var jobResult = await _hermesClient.SubmitJobAsync(jobType, cmd.Payload).ConfigureAwait(false);
             return BuildJobMechPilotResult(cmd.CommandId, legacyCmd, jobResult,
                 "Job 已提交到 Hermes 队列", "Hermes job 提交失败", "AGENT_JOB_SUBMIT_FAILED");
         }
 
-        private MechPilotResult RouteAgentJobPoll(MechPilotCommand cmd, string legacyCmd)
+        private async Task<MechPilotResult> RouteAgentJobPollAsync(MechPilotCommand cmd, string legacyCmd)
         {
             string jobId = "";
             if (cmd.Payload.ContainsKey("job_id")) jobId = Convert.ToString(cmd.Payload["job_id"]);
@@ -76,8 +75,7 @@ namespace SwAgentAddin
             if (string.IsNullOrEmpty(jobId))
                 return MechPilotResult.FailResult(cmd.CommandId, "缺少 job_id", "MISSING_JOB_ID", legacyCmd);
 
-            var jobResult = Task.Run(() => _hermesClient.PollJobAsync(jobId))
-                .GetAwaiter().GetResult();
+            var jobResult = await _hermesClient.PollJobAsync(jobId).ConfigureAwait(false);
             return BuildJobMechPilotResult(cmd.CommandId, legacyCmd, jobResult,
                 "Job 状态已获取", "Hermes job 轮询失败", "AGENT_JOB_POLL_FAILED");
         }
@@ -133,9 +131,9 @@ namespace SwAgentAddin
         }
 
         /// <summary>
-        /// 主入口 — 处理 JSON 命令字符串，返回 JSON 结果字符串
+        /// 主入口 — 异步处理 JSON 命令字符串，返回 JSON 结果字符串
         /// </summary>
-        public string HandleCommand(string commandJson)
+        public async Task<string> HandleCommandAsync(string commandJson)
         {
             try
             {
@@ -152,7 +150,7 @@ namespace SwAgentAddin
                     + " action=" + (cmd.Action ?? "")
                     + " executor=" + (cmd.Executor ?? ""));
 
-                MechPilotResult result = Route(cmd);
+                MechPilotResult result = await RouteAsync(cmd).ConfigureAwait(false);
                 WriteTrace("route result command_id=" + cmd.CommandId
                     + " ok=" + result.Ok
                     + " message=" + Shorten(result.Message, 160));
@@ -163,6 +161,15 @@ namespace SwAgentAddin
                 WriteTrace("ActionRouter.HandleCommand error: " + ex);
                 return MechPilotResult.FailResult("", "路由异常: " + ex.Message).ToJson();
             }
+        }
+
+        /// <summary>
+        /// 兼容旧调用：同步包装
+        /// </summary>
+        [Obsolete("Use HandleCommandAsync instead to avoid blocking STA thread")]
+        public string HandleCommand(string commandJson)
+        {
+            return Task.Run(() => HandleCommandAsync(commandJson)).GetAwaiter().GetResult();
         }
 
         /// <summary>
@@ -208,7 +215,7 @@ namespace SwAgentAddin
             return feature + "." + action;
         }
 
-        private MechPilotResult Route(MechPilotCommand cmd)
+        private async Task<MechPilotResult> RouteAsync(MechPilotCommand cmd)
         {
             string feature = cmd.Feature ?? "";
             string action = cmd.Action ?? "";
@@ -265,7 +272,7 @@ namespace SwAgentAddin
             if (string.Equals(cmd.Executor, "hermes", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(cmd.Executor, "remote", StringComparison.OrdinalIgnoreCase))
             {
-                return RouteHermes(feature, action, cmd, legacyCmd);
+                return await RouteHermesAsync(feature, action, cmd, legacyCmd).ConfigureAwait(false);
             }
 
             // Unknown
@@ -330,7 +337,7 @@ namespace SwAgentAddin
         /// <summary>
         /// Hermes Agent 路由 — AI 助手、图纸审核、选型推荐、设计计算、Agent 任务
         /// </summary>
-        private MechPilotResult RouteHermes(string feature, string action, MechPilotCommand cmd, string legacyCmd)
+        private async Task<MechPilotResult> RouteHermesAsync(string feature, string action, MechPilotCommand cmd, string legacyCmd)
         {
             if (_hermesClient == null)
             {
@@ -344,17 +351,17 @@ namespace SwAgentAddin
                 // Agent job queue lifecycle
                 if (IsJobSubmitCommand(feature, action, legacyCmd))
                 {
-                    return RouteAgentJobSubmit(cmd, legacyCmd);
+                    return await RouteAgentJobSubmitAsync(cmd, legacyCmd).ConfigureAwait(false);
                 }
                 if (IsJobPollCommand(feature, action, legacyCmd))
                 {
-                    return RouteAgentJobPoll(cmd, legacyCmd);
+                    return await RouteAgentJobPollAsync(cmd, legacyCmd).ConfigureAwait(false);
                 }
 
                 // Agent task lifecycle
                 if (string.Equals(feature, "agent", StringComparison.OrdinalIgnoreCase))
                 {
-                    return RouteAgentTask(action, cmd, legacyCmd);
+                    return await RouteAgentTaskAsync(action, cmd, legacyCmd).ConfigureAwait(false);
                 }
 
                 // Build context for Hermes
@@ -368,7 +375,7 @@ namespace SwAgentAddin
                 payload["feature"] = feature;
                 payload["action"] = action;
 
-                string hermesResult = _hermesClient.InvokeAgent($"{feature}.{action}", payload);
+                string hermesResult = await _hermesClient.InvokeAgentAsync($"{feature}.{action}", payload).ConfigureAwait(false);
 
                 // Parse Hermes response
                 var serializer = new JavaScriptSerializer();
@@ -406,14 +413,14 @@ namespace SwAgentAddin
         /// <summary>
         /// Agent 任务生命周期：submit → poll → result
         /// </summary>
-        private MechPilotResult RouteAgentTask(string action, MechPilotCommand cmd, string legacyCmd)
+        private async Task<MechPilotResult> RouteAgentTaskAsync(string action, MechPilotCommand cmd, string legacyCmd)
         {
             switch (action)
             {
                 case "submit":
-                    var submitResult = _hermesClient.SubmitTask(
+                    var submitResult = await _hermesClient.SubmitTaskAsync(
                         cmd.Payload.ContainsKey("task_type") ? Convert.ToString(cmd.Payload["task_type"]) : "general",
-                        cmd.Payload);
+                        cmd.Payload).ConfigureAwait(false);
                     if (submitResult.ContainsKey("success") && Convert.ToBoolean(submitResult["success"]))
                         return MechPilotResult.OkResult(cmd.CommandId, "任务已提交", submitResult, legacyCmd);
                     return MechPilotResult.FailResult(cmd.CommandId,
@@ -424,7 +431,7 @@ namespace SwAgentAddin
                     string pollTaskId = cmd.Payload.ContainsKey("task_id") ? Convert.ToString(cmd.Payload["task_id"]) : "";
                     if (string.IsNullOrEmpty(pollTaskId))
                         return MechPilotResult.FailResult(cmd.CommandId, "缺少 task_id", "MISSING_TASK_ID", legacyCmd);
-                    var pollResult = _hermesClient.PollTaskStatus(pollTaskId);
+                    var pollResult = await _hermesClient.PollTaskStatusAsync(pollTaskId).ConfigureAwait(false);
                     if (pollResult.ContainsKey("success") && Convert.ToBoolean(pollResult["success"]))
                         return MechPilotResult.OkResult(cmd.CommandId, "任务状态已获取", pollResult, legacyCmd);
                     return MechPilotResult.FailResult(cmd.CommandId,
@@ -435,7 +442,7 @@ namespace SwAgentAddin
                     string resultTaskId = cmd.Payload.ContainsKey("task_id") ? Convert.ToString(cmd.Payload["task_id"]) : "";
                     if (string.IsNullOrEmpty(resultTaskId))
                         return MechPilotResult.FailResult(cmd.CommandId, "缺少 task_id", "MISSING_TASK_ID", legacyCmd);
-                    var taskResult = _hermesClient.GetTaskResult(resultTaskId);
+                    var taskResult = await _hermesClient.GetTaskResultAsync(resultTaskId).ConfigureAwait(false);
                     if (taskResult.ContainsKey("success") && Convert.ToBoolean(taskResult["success"]))
                         return MechPilotResult.OkResult(cmd.CommandId, "任务结果已获取", taskResult, legacyCmd);
                     return MechPilotResult.FailResult(cmd.CommandId,
