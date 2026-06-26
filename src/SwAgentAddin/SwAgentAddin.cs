@@ -10,6 +10,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -68,6 +69,8 @@ namespace SwAgentAddin
         private ICommandManager _cmdMgr;
         private ITaskpaneView _taskpaneView;
         private OnlineSelectionTaskPane _onlineSelectionPane;
+        private readonly List<ITaskpaneView> _taskpaneViews = new List<ITaskpaneView>();
+        private readonly List<OnlineSelectionTaskPane> _taskpanePanes = new List<OnlineSelectionTaskPane>();
         private AddinConfig _config;
         private LocalPropertyRules _rules;
         private int _addinCookie;
@@ -111,7 +114,7 @@ namespace SwAgentAddin
                 LoadRules();
                 InitActionRouter();
                 AddCommandMgr();
-                AddTaskPane();
+                AddCustomTaskPanes();
 
                 // Attach event handlers
                 AttachEventHandlers();
@@ -135,7 +138,7 @@ namespace SwAgentAddin
             try
             {
                 RemoveCommandMgr();
-                RemoveTaskPane();
+                RemoveCustomTaskPanes();
                 DetachEventHandlers();
                 _config?.Log("Add-in unloaded.");
             }
@@ -452,6 +455,104 @@ namespace SwAgentAddin
 
         #region UI — Task Pane
 
+        private void AddCustomTaskPanes()
+        {
+            try
+            {
+                RemoveCustomTaskPanes();
+
+                string htmlPath = Path.Combine(GetAddinDirectory(), "frontend/taskpane.html");
+                if (!File.Exists(htmlPath))
+                    File.WriteAllText(htmlPath, TaskpaneHtml.DefaultHtml, Encoding.UTF8);
+
+                foreach (var entry in GetCustomTaskPaneEntries().Reverse())
+                {
+                    string iconPath = GetCustomTaskPaneIconPath(entry.IconKey);
+                    WriteTrace("AddCustomTaskPanes: creating index=" + entry.Index + " title=" + entry.Title + " icon=" + iconPath);
+
+                    ITaskpaneView view = _swApp.CreateTaskpaneView2(iconPath ?? "", entry.Title);
+                    if (view == null)
+                    {
+                        WriteTrace("AddCustomTaskPanes: CreateTaskpaneView2 returned null for " + entry.Title + "; trying CreateTaskpaneView3.");
+                        view = _swApp.CreateTaskpaneView3(null, entry.Title);
+                    }
+
+                    if (view == null)
+                    {
+                        WriteTrace("AddCustomTaskPanes: failed to create pane for " + entry.Title);
+                        continue;
+                    }
+
+                    _taskpaneViews.Add(view);
+                    if (entry.Index == 1)
+                        _taskpaneView = view;
+
+                    object control = null;
+                    try
+                    {
+                        control = view.AddControl(OnlineSelectionTaskPaneProgId, "");
+                        var pane = control as OnlineSelectionTaskPane;
+                        if (pane != null)
+                        {
+                            pane.Initialize(entry.Title, entry.Url);
+                            _taskpanePanes.Add(pane);
+                            if (entry.Index == 1)
+                                _onlineSelectionPane = pane;
+                        }
+                    }
+                    catch (Exception controlEx)
+                    {
+                        WriteTrace("AddCustomTaskPanes: WebView2 pane control failed for " + entry.Title + ": " + controlEx);
+                    }
+
+                    if (control == null)
+                    {
+                        try
+                        {
+                            control = view.AddControl("Shell.Explorer.2", "");
+                            if (control != null && !string.IsNullOrWhiteSpace(entry.Url) && !IsShellOpenTarget(entry.Url))
+                            {
+                                dynamic browser = control;
+                                browser.Navigate(entry.Url);
+                            }
+                        }
+                        catch (Exception browserEx)
+                        {
+                            WriteTrace("AddCustomTaskPanes: browser fallback failed for " + entry.Title + ": " + browserEx);
+                        }
+                    }
+                }
+
+                WriteTrace("AddCustomTaskPanes: created count=" + _taskpaneViews.Count);
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("AddCustomTaskPanes exception: " + ex);
+            }
+        }
+
+        private void RemoveCustomTaskPanes()
+        {
+            try
+            {
+                foreach (var view in _taskpaneViews.ToArray())
+                {
+                    try { view.DeleteView(); }
+                    catch (Exception innerEx) { WriteTrace("RemoveCustomTaskPanes: DeleteView failed: " + innerEx.Message); }
+                }
+
+                _taskpaneViews.Clear();
+                _taskpanePanes.Clear();
+                _taskpaneView = null;
+                _onlineSelectionPane = null;
+                WriteTrace("RemoveCustomTaskPanes: deleted.");
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("RemoveCustomTaskPanes exception: " + ex);
+            }
+        }
+
         private void AddTaskPane()
         {
             try
@@ -535,7 +636,7 @@ namespace SwAgentAddin
                 }
                 else
                 {
-                    AddTaskPane();
+                    AddCustomTaskPanes();
                 }
             }
             catch (Exception ex)
@@ -2215,7 +2316,7 @@ namespace SwAgentAddin
         {
             string url = GetOnlineSelectionUrl();
             if (_taskpaneView == null)
-                AddTaskPane();
+                AddCustomTaskPanes();
 
             if (_taskpaneView == null)
             {
@@ -2225,7 +2326,7 @@ namespace SwAgentAddin
 
             _taskpaneView?.ShowView();
             if (_onlineSelectionPane != null)
-                _onlineSelectionPane.Initialize(url);
+                _onlineSelectionPane.Initialize(_config);
             WriteTrace("ShowOnlineSelectionTaskPane: " + url);
         }
         catch (Exception ex)
@@ -2246,6 +2347,9 @@ namespace SwAgentAddin
             return DefaultOnlineSelectionUrl;
 
         string trimmed = url.Trim();
+        if (IsShellOpenTarget(trimmed))
+            return NormalizeShellOpenTarget(trimmed);
+
         if (!trimmed.Contains("://"))
             trimmed = "https://" + trimmed;
 
@@ -2257,6 +2361,38 @@ namespace SwAgentAddin
         }
 
         return DefaultOnlineSelectionUrl;
+    }
+
+    internal static bool IsShellOpenTarget(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+            return false;
+
+        string trimmed = target.Trim();
+        if (trimmed.StartsWith(@"\\", StringComparison.Ordinal))
+            return true;
+        if (Regex.IsMatch(trimmed, @"^[A-Za-z]:[\\/]", RegexOptions.CultureInvariant))
+            return true;
+        if (trimmed.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!trimmed.Contains("://") && trimmed.Contains("\\"))
+            return true;
+
+        return false;
+    }
+
+    internal static string NormalizeShellOpenTarget(string target)
+    {
+        string trimmed = (target ?? "").Trim();
+        if (trimmed.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            return trimmed;
+        if (trimmed.StartsWith(@"\\", StringComparison.Ordinal))
+            return trimmed;
+        if (Regex.IsMatch(trimmed, @"^[A-Za-z]:[\\/]", RegexOptions.CultureInvariant))
+            return trimmed;
+        if (!trimmed.Contains("://") && trimmed.Contains("\\"))
+            return @"\\" + trimmed.TrimStart('\\');
+        return trimmed;
     }
 
     private static string GetTaskPaneIconPath()
@@ -2282,9 +2418,56 @@ namespace SwAgentAddin
         return null;
     }
 
+    private IEnumerable<CustomTaskPaneEntry> GetCustomTaskPaneEntries()
+    {
+        yield return new CustomTaskPaneEntry(1, _config?.CustomButton1Title, _config?.CustomButton1Url, "PDM");
+        yield return new CustomTaskPaneEntry(2, _config?.CustomButton2Title, _config?.CustomButton2Url, "MDM");
+        yield return new CustomTaskPaneEntry(3, _config?.CustomButton3Title, _config?.CustomButton3Url, "ERP");
+        yield return new CustomTaskPaneEntry(4, _config?.CustomButton4Title, _config?.CustomButton4Url, "BBS");
+        yield return new CustomTaskPaneEntry(5, _config?.CustomButton5Title, _config?.CustomButton5Url, "DAT");
+    }
+
+    private static string GetCustomTaskPaneIconPath(string iconKey)
+    {
+        string dir = GetAddinDirectory();
+        string[] candidates =
+        {
+            Path.Combine(dir, "assets", "icons", "mechpilot-custom-" + iconKey + "-32.bmp"),
+            Path.Combine(dir, "assets", "icons", "mechpilot-custom-" + iconKey + "-20.bmp"),
+            Path.Combine(dir, "assets", "icons", "mechpilot-online-selection-32.bmp"),
+            Path.Combine(dir, "assets", "icons", "mechpilot-ribbon-main-32.bmp"),
+            Path.Combine(dir, "assets", "icons", "mechpilot-main-32.bmp")
+        };
+
+        foreach (string path in candidates)
+        {
+            if (File.Exists(path))
+                return path;
+        }
+
+        WriteTrace("GetCustomTaskPaneIconPath: no icon found for " + iconKey);
+        return null;
+    }
+
+    private class CustomTaskPaneEntry
+    {
+        public CustomTaskPaneEntry(int index, string title, string url, string iconKey)
+        {
+            Index = index;
+            Title = string.IsNullOrWhiteSpace(title) ? iconKey : title;
+            Url = string.IsNullOrWhiteSpace(url) ? "" : NormalizeOnlineSelectionUrl(url);
+            IconKey = iconKey;
+        }
+
+        public int Index { get; private set; }
+        public string Title { get; private set; }
+        public string Url { get; private set; }
+        public string IconKey { get; private set; }
+    }
+
     internal static void OpenOnlineSelectionInBrowser(string url)
     {
-        url = NormalizeOnlineSelectionUrl(url);
+        url = IsShellOpenTarget(url) ? NormalizeShellOpenTarget(url) : NormalizeOnlineSelectionUrl(url);
 
         try
         {
@@ -3049,8 +3232,20 @@ namespace SwAgentAddin
 
         public void Initialize(string url)
         {
-            _url = SwAgentAddin.NormalizeOnlineSelectionUrl(url);
+            _url = SwAgentAddin.IsShellOpenTarget(url)
+                ? SwAgentAddin.NormalizeShellOpenTarget(url)
+                : SwAgentAddin.NormalizeOnlineSelectionUrl(url);
             NavigateOnlineSelection();
+        }
+
+        public void Initialize(string title, string url)
+        {
+            Initialize(url);
+        }
+
+        public void Initialize(AddinConfig config)
+        {
+            Initialize(config?.OnlineSelectionUrl);
         }
 
         public async void NavigateOnlineSelection()
@@ -3058,6 +3253,12 @@ namespace SwAgentAddin
             try
             {
                 if (_initializing) return;
+
+                if (SwAgentAddin.IsShellOpenTarget(_url))
+                {
+                    _status.Text = "Click the top-right button to open this shared folder.";
+                    return;
+                }
 
                 if (_webView == null)
                 {
@@ -3618,6 +3819,16 @@ namespace SwAgentAddin
         public bool CockpitFallbackToWinforms { get; set; } = true;
         public string CockpitSchemaVersion { get; set; } = "mechpilot.cockpit.context.v1";
         public string OnlineSelectionUrl { get; set; } = SwAgentAddin.DefaultOnlineSelectionUrl;
+        public string CustomButton1Title { get; set; } = "PDM";
+        public string CustomButton1Url { get; set; } = "";
+        public string CustomButton2Title { get; set; } = "MDM";
+        public string CustomButton2Url { get; set; } = "";
+        public string CustomButton3Title { get; set; } = "ERP";
+        public string CustomButton3Url { get; set; } = "";
+        public string CustomButton4Title { get; set; } = "BBS";
+        public string CustomButton4Url { get; set; } = "";
+        public string CustomButton5Title { get; set; } = "DAT";
+        public string CustomButton5Url { get; set; } = "";
 
         // Agent Server / Hermes (Agent S)
         public AgentServerConfig AgentServer { get; set; } = new AgentServerConfig();
@@ -3717,6 +3928,26 @@ namespace SwAgentAddin
                 config.CockpitSchemaVersion = Convert.ToString(dict["cockpit_schema_version"]);
             if (dict.ContainsKey("online_selection_url"))
                 config.OnlineSelectionUrl = Convert.ToString(dict["online_selection_url"]);
+            if (dict.ContainsKey("custom_button_1_title"))
+                config.CustomButton1Title = Convert.ToString(dict["custom_button_1_title"]);
+            if (dict.ContainsKey("custom_button_1_url"))
+                config.CustomButton1Url = Convert.ToString(dict["custom_button_1_url"]);
+            if (dict.ContainsKey("custom_button_2_title"))
+                config.CustomButton2Title = Convert.ToString(dict["custom_button_2_title"]);
+            if (dict.ContainsKey("custom_button_2_url"))
+                config.CustomButton2Url = Convert.ToString(dict["custom_button_2_url"]);
+            if (dict.ContainsKey("custom_button_3_title"))
+                config.CustomButton3Title = Convert.ToString(dict["custom_button_3_title"]);
+            if (dict.ContainsKey("custom_button_3_url"))
+                config.CustomButton3Url = Convert.ToString(dict["custom_button_3_url"]);
+            if (dict.ContainsKey("custom_button_4_title"))
+                config.CustomButton4Title = Convert.ToString(dict["custom_button_4_title"]);
+            if (dict.ContainsKey("custom_button_4_url"))
+                config.CustomButton4Url = Convert.ToString(dict["custom_button_4_url"]);
+            if (dict.ContainsKey("custom_button_5_title"))
+                config.CustomButton5Title = Convert.ToString(dict["custom_button_5_title"]);
+            if (dict.ContainsKey("custom_button_5_url"))
+                config.CustomButton5Url = Convert.ToString(dict["custom_button_5_url"]);
 
             // Agent Server (Hermes)
             if (dict.ContainsKey("agent_server"))
@@ -3775,6 +4006,16 @@ namespace SwAgentAddin
             dict["cockpit_fallback_to_winforms"] = CockpitFallbackToWinforms;
             dict["cockpit_schema_version"] = CockpitSchemaVersion;
             dict["online_selection_url"] = OnlineSelectionUrl;
+            dict["custom_button_1_title"] = CustomButton1Title;
+            dict["custom_button_1_url"] = CustomButton1Url;
+            dict["custom_button_2_title"] = CustomButton2Title;
+            dict["custom_button_2_url"] = CustomButton2Url;
+            dict["custom_button_3_title"] = CustomButton3Title;
+            dict["custom_button_3_url"] = CustomButton3Url;
+            dict["custom_button_4_title"] = CustomButton4Title;
+            dict["custom_button_4_url"] = CustomButton4Url;
+            dict["custom_button_5_title"] = CustomButton5Title;
+            dict["custom_button_5_url"] = CustomButton5Url;
 
             // Agent Server (Hermes)
             if (AgentServer != null) dict["agent_server"] = AgentServer.ToDict();

@@ -17,3 +17,10 @@ Desktop.ini
 
 # Backup
 *.bak*
+
+# Temp / demo
+.codex_tmp_*/
+node_modules/
+
+# Large binaries
+*.pptx
