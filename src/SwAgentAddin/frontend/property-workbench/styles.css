@@ -1057,6 +1057,66 @@ html, body {
 .job-panel.done .progress-bar {
   background: var(--success);
 }
+.job-panel.warning .progress-bar {
+  background: var(--warning);
+}
+.job-results {
+  border-top: 1px solid var(--border-light);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.job-results-head {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.result-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  background: var(--bg-panel);
+}
+.result-item.result-ok .result-badge {
+  color: var(--success);
+}
+.result-item.result-fail {
+  background: #fef0f0;
+}
+.result-item.result-fail .result-badge {
+  color: var(--danger);
+}
+.result-name {
+  flex: 1;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.result-badge {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.result-detail {
+  color: var(--text-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .hint {
   font-size: 12px;
   color: var(--text-dim);

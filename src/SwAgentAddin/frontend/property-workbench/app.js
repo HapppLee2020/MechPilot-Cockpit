@@ -275,7 +275,7 @@
 
   function isTerminalJobStatus(status) {
     status = String(status || '').toLowerCase();
-    return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'canceled';
+    return status === 'completed' || status === 'failed' || status === 'partial_failed' || status === 'cancelled' || status === 'canceled';
   }
 
   function normalizeJobData(data, fallback) {
@@ -297,7 +297,8 @@
       failed_items: data.failed_items != null ? data.failed_items : (data.failedItems != null ? data.failedItems : fallback.failed_items),
       progress_percent: progress,
       current_stage: data.current_stage || data.currentStage || fallback.current_stage || '',
-      message: data.message || fallback.message || ''
+      message: data.message || fallback.message || '',
+      results: data.results || fallback.results || null
     };
   }
 
@@ -434,11 +435,15 @@
     }
 
     state.activeJob = normalizeJobData(data, state.activeJob);
+    if (data.results) state.activeJob.results = data.results;
     renderJobStatusPanel();
     renderStatusbar();
     if (isTerminalJobStatus(state.activeJob.status)) {
       clearJobPollTimer();
-      addAIMessage('system', '任务状态：' + state.activeJob.status);
+      var summary = '任务完成：' + statusLabel(state.activeJob.status);
+      if (state.activeJob.completed_items != null) summary += '，成功 ' + state.activeJob.completed_items;
+      if (state.activeJob.failed_items != null && state.activeJob.failed_items > 0) summary += '，失败 ' + state.activeJob.failed_items;
+      addAIMessage('system', summary);
     }
   }
 
@@ -450,6 +455,7 @@
       running: '运行中',
       completed: '已完成',
       failed: '失败',
+      partial_failed: '部分失败',
       cancelled: '已取消',
       canceled: '已取消'
     };
@@ -468,8 +474,29 @@
 
     var progress = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
     var terminal = isTerminalJobStatus(job.status);
-    var statusClass = job.status === 'failed' ? 'error' : (terminal ? 'done' : 'running');
+    var statusClass = job.status === 'failed' ? 'error' : (job.status === 'partial_failed' ? 'warning' : (terminal ? 'done' : 'running'));
     var submittedCount = job.payload && job.payload.components ? job.payload.components.length : 0;
+    var resultsHtml = '';
+    if (terminal && job.results && Array.isArray(job.results) && job.results.length > 0) {
+      var items = job.results.map(function (item) {
+        var name = item.component || item.name || item.item_id || '-';
+        var itemOk = item.success === true || item.status === 'completed';
+        var itemLabel = itemOk ? '✓ 通过' : '✗ 失败';
+        var itemClass = itemOk ? 'result-ok' : 'result-fail';
+        var errCode = item.error_code || '';
+        var msg = item.message || '';
+        var detail = errCode ? esc(errCode) : (msg ? esc(msg) : '');
+        return '<div class="result-item ' + itemClass + '">' +
+          '<span class="result-name">' + esc(name) + '</span>' +
+          '<span class="result-badge">' + itemLabel + '</span>' +
+          (detail ? '<span class="result-detail">' + detail + '</span>' : '') +
+        '</div>';
+      }).join('');
+      resultsHtml = '<div class="job-results">' +
+        '<div class="job-results-head">审核结果</div>' +
+        '<div class="result-list">' + items + '</div>' +
+      '</div>';
+    }
     return '' +
       '<div class="job-panel ' + statusClass + '">' +
         '<div class="job-panel-head">' +
@@ -477,7 +504,7 @@
             '<div class="job-title">任务' + (job.accepted ? '已受理' : '提交中') + '</div>' +
             '<div class="job-subtitle">' + esc(job.source || 'Agent Job') + '</div>' +
           '</div>' +
-          '<span class="badge badge-status ' + (statusClass === 'running' ? 'warning' : '') + '">' + esc(statusLabel(job.status)) + '</span>' +
+          '<span class="badge badge-status ' + (statusClass === 'error' ? 'error' : statusClass === 'warning' ? 'warning' : statusClass === 'running' ? 'warning' : 'done') + '">' + esc(statusLabel(job.status)) + '</span>' +
         '</div>' +
         '<div class="job-grid">' +
           '<div><span>Job ID</span><b>' + esc(job.job_id || '-') + '</b></div>' +
@@ -496,6 +523,7 @@
             ' / 失败 ' + esc(job.failed_items != null ? job.failed_items : '-') + '</div>' +
         '</div>' +
         (job.message ? '<p class="' + (job.status === 'failed' ? 'warn' : 'hint') + '">' + esc(job.message) + '</p>' : '') +
+        resultsHtml +
       '</div>';
   }
 
