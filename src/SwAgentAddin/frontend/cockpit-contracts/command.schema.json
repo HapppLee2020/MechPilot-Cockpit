@@ -9,7 +9,13 @@
     "command": {
       "type": "string",
       "description": "命令标识符",
-      "enum": ["property_fill", "property_check", "drawing_review", "read_properties", "refresh_context", "open_settings"]
+      "enum": ["local.read_properties", "refresh_context", "property_fill", "property_check",
+        "ai.props.check", "node_selected", "bom.locate", "cockpit.ping",
+        "window_close", "window_minimize", "window_maximize",
+        "ai.material.search", "ai.drawing.review", "ai.selection.recommend",
+        "ai.design.calculate", "ai.assistant.chat", "ai.node.analyze",
+        "agent.job.submit", "agent.job.poll", "material.properties.review.submit",
+        "agent.task.submit", "agent.task.poll", "agent.task.result"]
     },
     "request_id": {
       "type": "string",
