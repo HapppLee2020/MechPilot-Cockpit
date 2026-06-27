@@ -276,19 +276,40 @@ namespace SwAgentAddin
 
             try
             {
-                var body = new Dictionary<string, object>
+                Dictionary<string, object> body;
+                bool isRunsEndpoint = url.IndexOf("/v1/runs", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (isRunsEndpoint)
                 {
-                    ["job_type"] = string.IsNullOrWhiteSpace(jobType) ? "general" : jobType,
-                    ["request_id"] = requestId,
-                    ["payload"] = payload,
-                    ["context_mode"] = contextMode ?? _server.ContextModeDefault,
-                    ["client"] = new Dictionary<string, object>
+                    body = new Dictionary<string, object>
                     {
-                        ["name"] = "MechPilot",
-                        ["version"] = "1.0.0",
-                        ["machine"] = Environment.MachineName
-                    }
-                };
+                        ["input"] = BuildRunInput(jobType, payload),
+                        ["instructions"] = "You are MechPilot Agent. Analyze the SolidWorks/Cockpit task context and return concise Chinese findings and recommended actions.",
+                        ["metadata"] = new Dictionary<string, object>
+                        {
+                            ["source"] = "MechPilot",
+                            ["job_type"] = string.IsNullOrWhiteSpace(jobType) ? "general" : jobType,
+                            ["request_id"] = requestId,
+                            ["context_mode"] = contextMode ?? _server.ContextModeDefault,
+                            ["machine"] = Environment.MachineName
+                        }
+                    };
+                }
+                else
+                {
+                    body = new Dictionary<string, object>
+                    {
+                        ["job_type"] = string.IsNullOrWhiteSpace(jobType) ? "general" : jobType,
+                        ["request_id"] = requestId,
+                        ["payload"] = payload,
+                        ["context_mode"] = contextMode ?? _server.ContextModeDefault,
+                        ["client"] = new Dictionary<string, object>
+                        {
+                            ["name"] = "MechPilot",
+                            ["version"] = "1.0.0",
+                            ["machine"] = Environment.MachineName
+                        }
+                    };
+                }
 
                 string json = new JavaScriptSerializer().Serialize(body);
                 _log(string.Format("[Hermes] submit job_type={0} req={1} url={2}", jobType, requestId, url));
@@ -308,6 +329,7 @@ namespace SwAgentAddin
                     {
                         var parsed = DeserializeDict(result);
                         string jobId = GetString(parsed, "job_id");
+                        if (string.IsNullOrEmpty(jobId)) jobId = GetString(parsed, "run_id");
                         if (string.IsNullOrEmpty(jobId)) jobId = GetString(parsed, "task_id");
                         if (string.IsNullOrEmpty(jobId)) jobId = GetString(parsed, "id");
 
@@ -531,6 +553,26 @@ namespace SwAgentAddin
         public Dictionary<string, object> GetTaskResult(string taskId)
         {
             return Task.Run(() => GetTaskResultAsync(taskId)).GetAwaiter().GetResult();
+        }
+
+
+        private static string BuildRunInput(string jobType, object payload)
+        {
+            var serializer = new JavaScriptSerializer();
+            string payloadJson;
+            try
+            {
+                payloadJson = serializer.Serialize(payload ?? new Dictionary<string, object>());
+            }
+            catch
+            {
+                payloadJson = Convert.ToString(payload) ?? "";
+            }
+
+            return "MechPilot Cockpit submitted an immediate execution task.\n"
+                + "Task type: " + (string.IsNullOrWhiteSpace(jobType) ? "general" : jobType) + "\n"
+                + "Analyze/review the following JSON context and return concise Chinese findings and recommended actions.\n"
+                + payloadJson;
         }
 
         private void AddAuthHeader(StringContent content)
