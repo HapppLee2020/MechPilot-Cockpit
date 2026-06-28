@@ -412,19 +412,33 @@ namespace SwAgentAddin
                     {
                         var parsed = DeserializeDict(result);
                         string returnedJobId = GetString(parsed, "job_id");
+                        if (string.IsNullOrEmpty(returnedJobId)) returnedJobId = GetString(parsed, "run_id");
                         if (string.IsNullOrEmpty(returnedJobId)) returnedJobId = GetString(parsed, "task_id");
                         if (string.IsNullOrEmpty(returnedJobId)) returnedJobId = safeJobId;
 
-                        return MakeJobResult(true, null, null, new Dictionary<string, object>
+                        var data = new Dictionary<string, object>
                         {
                             ["accepted"] = true,
                             ["job_id"] = returnedJobId,
                             ["status"] = GetValue(parsed, "status", "unknown"),
                             ["queue_position"] = GetValue(parsed, "queue_position", null),
                             ["estimated_wait_seconds"] = GetValue(parsed, "estimated_wait_seconds", null),
-                            ["poll_interval_seconds"] = _server.JobPollIntervalSeconds,
-                            ["raw"] = result
-                        });
+                            ["poll_interval_seconds"] = _server.JobPollIntervalSeconds
+                        };
+
+                        // Extract AI response content for chat and other jobs
+                        if (parsed.ContainsKey("output")) data["output"] = parsed["output"];
+                        if (parsed.ContainsKey("content")) data["content"] = parsed["content"];
+                        if (parsed.ContainsKey("result")) data["result"] = parsed["result"];
+                        if (parsed.ContainsKey("results")) data["results"] = parsed["results"];
+                        if (parsed.ContainsKey("message")) data["message"] = parsed["message"];
+                        if (parsed.ContainsKey("completed_items")) data["completed_items"] = parsed["completed_items"];
+                        if (parsed.ContainsKey("failed_items")) data["failed_items"] = parsed["failed_items"];
+                        if (parsed.ContainsKey("total_items")) data["total_items"] = parsed["total_items"];
+                        if (parsed.ContainsKey("progress_percent")) data["progress_percent"] = parsed["progress_percent"];
+                        if (parsed.ContainsKey("current_stage")) data["current_stage"] = parsed["current_stage"];
+
+                        return MakeJobResult(true, null, null, data);
                     }
 
                     return MakeJobResult(false, null,

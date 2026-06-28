@@ -72,6 +72,7 @@
     <None Include="frontend\property-workbench\**\*.*" CopyToOutputDirectory="Always" />
     <!-- 配置 -->
     <None Include="config\config.json" CopyToOutputDirectory="Always" />
+    <None Include="config\config.template.json" CopyToOutputDirectory="Always" />
     <None Include="config\rules.local.json" CopyToOutputDirectory="Always" />
     <!-- 图标（Ribbon 风格 — 首选） -->
     <None Include="assets\icons\mechpilot-ribbon-main-20.bmp" CopyToOutputDirectory="Always" />

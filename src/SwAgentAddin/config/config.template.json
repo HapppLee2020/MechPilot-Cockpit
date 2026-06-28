@@ -62,7 +62,6 @@
     "stream_endpoint_template": "/api/v1/task/{task_id}/stream",
     "job_submit_endpoint": "/v1/runs",
     "job_status_endpoint_template": "/v1/runs/{job_id}",
-    "job_submit_endpoint_legacy_DO_NOT_USE": "/api/jobs",
     "timeout_seconds": 120,
     "poll_interval_seconds": 3,
     "job_poll_interval_seconds": 3,

@@ -82,6 +82,7 @@ namespace SwAgentAddin
 
         // Document event handlers
         private Hashtable _openDocuments;
+        private bool _autoRefreshEnabled = false;
 
         #endregion
 
@@ -137,6 +138,8 @@ namespace SwAgentAddin
 
             try
             {
+                // CKP-004-12: 关闭 Cockpit 前先取消 TopMost 并释放
+                SafeCloseCockpit("addin_disconnect");
                 RemoveCommandMgr();
                 RemoveCustomTaskPanes();
                 DetachEventHandlers();
@@ -151,6 +154,42 @@ namespace SwAgentAddin
             _cmdMgr = null;
             _swApp = null;
             return true;
+        }
+
+        /// <summary>
+        /// CKP-004-12: 安全关闭 Cockpit 窗口。SW 退出 / Add-in unload / 异常时调用。
+        /// </summary>
+        private void SafeCloseCockpit(string reason)
+        {
+            WriteTrace("SafeCloseCockpit: reason=" + reason + " cockpitExists=" + (_cockpitForm != null));
+            if (_cockpitForm == null || _cockpitForm.IsDisposed) return;
+
+            try
+            {
+                // 确保在 UI 线程操作
+                if (_cockpitForm.InvokeRequired)
+                {
+                    _cockpitForm.BeginInvoke(new Action(() => SafeCloseCockpit(reason)));
+                    return;
+                }
+
+                // 清理 TopMost 防止残留置顶窗口
+                try { _cockpitForm.TopMost = false; } catch { }
+
+                // 关闭窗口（会触发 OnFormClosing → Dispose WebView2）
+                try { _cockpitForm.Close(); } catch (Exception ex)
+                {
+                    WriteTrace("SafeCloseCockpit: Close() failed: " + ex.Message);
+                    try { _cockpitForm.Hide(); } catch { }
+                    try { _cockpitForm.Dispose(); } catch { }
+                }
+                WriteTrace("SafeCloseCockpit: closed (reason=" + reason + ")");
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("SafeCloseCockpit outer exception: " + ex.Message);
+                try { _cockpitForm?.Dispose(); } catch { }
+            }
         }
 
         #endregion
@@ -678,12 +717,57 @@ namespace SwAgentAddin
 
         private void AttachSWEvents()
         {
-            // SW event attachment — placeholder for document open/close events
+            try
+            {
+                if (_swApp != null)
+                {
+                    ((DSldWorksEvents_Event)_swApp).ActiveDocChangeNotify += OnActiveDocChange;
+                    WriteTrace("AttachSWEvents: ActiveDocChangeNotify subscribed.");
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("AttachSWEvents exception: " + ex);
+            }
         }
 
         private void DetachSWEvents()
         {
-            // SW event detachment — placeholder
+            try
+            {
+                if (_swApp != null)
+                {
+                    ((DSldWorksEvents_Event)_swApp).ActiveDocChangeNotify -= OnActiveDocChange;
+                    WriteTrace("DetachSWEvents: ActiveDocChangeNotify unsubscribed.");
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("DetachSWEvents exception: " + ex);
+            }
+        }
+
+        private int OnActiveDocChange()
+        {
+            try
+            {
+                WriteTrace("OnActiveDocChange: autoRefresh=" + _autoRefreshEnabled);
+                if (_autoRefreshEnabled && _cockpitForm != null)
+                {
+                    // Build fresh context and push to WebView2
+                    string contextJson = BuildCockpitContext();
+                    if (!string.IsNullOrEmpty(contextJson))
+                    {
+                        _cockpitForm.PushContextToWebView(contextJson);
+                    }
+                }
+                return 0; // S_OK
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("OnActiveDocChange exception: " + ex);
+                return 0;
+            }
         }
 
         #endregion
@@ -970,6 +1054,13 @@ namespace SwAgentAddin
                             ["engineer_id"] = _config?.EngineerId ?? ""
                         });
 
+                    case "local.set_auto_refresh":
+                        var arPayload = envelope.ContainsKey("payload") ? envelope["payload"] as Dictionary<string, object> : null;
+                        bool enabled = arPayload != null && arPayload.ContainsKey("enabled") && Convert.ToBoolean(arPayload["enabled"]);
+                        _autoRefreshEnabled = enabled;
+                        WriteTrace("Auto-refresh " + (enabled ? "enabled" : "disabled"));
+                        return MakeCockpitResult(requestId, true, "Auto-refresh " + (enabled ? "已开启" : "已关闭"), null, null);
+
                     case "local.read_properties":
                         string contextJson = BuildCockpitContext();
                         return MakeCockpitResult(requestId, true, null, null, new Dictionary<string, object>
@@ -992,6 +1083,9 @@ namespace SwAgentAddin
 
                     case "window_maximize":
                         return MakeCockpitResult(requestId, true, null, null, new Dictionary<string, object> { ["action"] = "maximize" });
+
+                    case "agent.health.check":
+                        return HandleHermesHealthCheck(requestId);
 
                     default:
                         // 通过 ActionRouter 路由 AI/Agent 命令
@@ -1041,6 +1135,143 @@ namespace SwAgentAddin
                 result["data"] = data;
 
             return new JavaScriptSerializer().Serialize(result);
+        }
+
+        private string HandleHermesHealthCheck(string requestId)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                var agentCfg = _config?.AgentServer;
+                if (agentCfg == null || string.IsNullOrWhiteSpace(agentCfg.BaseUrl))
+                {
+                    return MakeCockpitResult(requestId, false, "NO_HERMES_CONFIG",
+                        "Hermes 未配置：config.json 中 agent_server.base_url 为空");
+                }
+
+                string baseUrl = agentCfg.BaseUrl.TrimEnd('/');
+                string endpoint = agentCfg.JobSubmitEndpoint ?? "/v1/runs";
+                if (!endpoint.StartsWith("/")) endpoint = "/" + endpoint;
+                string fullUrl = baseUrl + endpoint;
+                string apiKey = agentCfg.ApiKey ?? "";
+
+                using (var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(10) })
+                {
+                    if (!string.IsNullOrEmpty(apiKey))
+                        client.DefaultRequestHeaders.Authorization =
+                            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+
+                    var payload = new Dictionary<string, object>
+                    {
+                        ["input"] = "MechPilot health check, reply OK only",
+                        ["metadata"] = new Dictionary<string, object>
+                        {
+                            ["source"] = "cockpit_health_check"
+                        }
+                    };
+                    string json = new JavaScriptSerializer().Serialize(payload);
+                    var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+                    var response = client.PostAsync(fullUrl, content).GetAwaiter().GetResult();
+                    int httpStatus = (int)response.StatusCode;
+
+                    sw.Stop();
+
+                    if (httpStatus == 202 || httpStatus == 200)
+                    {
+                        return MakeCockpitResult(requestId, true, null, null, new Dictionary<string, object>
+                        {
+                            ["status"] = "online",
+                            ["base_url"] = baseUrl,
+                            ["endpoint"] = endpoint,
+                            ["http_status"] = httpStatus,
+                            ["message"] = "OK (" + httpStatus + ")",
+                            ["checked_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                            ["duration_ms"] = sw.ElapsedMilliseconds
+                        });
+                    }
+                    else if (httpStatus == 401 || httpStatus == 403)
+                    {
+                        return MakeCockpitResult(requestId, false, "AUTH_FAILED",
+                            "Hermes 返回 " + httpStatus + "：认证失败",
+                            new Dictionary<string, object>
+                            {
+                                ["status"] = "auth_required",
+                                ["base_url"] = baseUrl,
+                                ["endpoint"] = endpoint,
+                                ["http_status"] = httpStatus,
+                                ["message"] = "HTTP " + httpStatus + " — 认证失败",
+                                ["checked_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                                ["duration_ms"] = sw.ElapsedMilliseconds
+                            });
+                    }
+                    else if (httpStatus == 405)
+                    {
+                        return MakeCockpitResult(requestId, false, "WRONG_METHOD",
+                            "Hermes 返回 405：端点方法不匹配",
+                            new Dictionary<string, object>
+                            {
+                                ["status"] = "reachable_wrong_method",
+                                ["base_url"] = baseUrl,
+                                ["endpoint"] = endpoint,
+                                ["http_status"] = httpStatus,
+                                ["message"] = "HTTP 405 — 服务可达，端点方法不匹配",
+                                ["checked_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                                ["duration_ms"] = sw.ElapsedMilliseconds
+                            });
+                    }
+                    else
+                    {
+                        return MakeCockpitResult(requestId, false, "HERMES_ERROR",
+                            "Hermes 返回 " + httpStatus,
+                            new Dictionary<string, object>
+                            {
+                                ["status"] = "error",
+                                ["base_url"] = baseUrl,
+                                ["endpoint"] = endpoint,
+                                ["http_status"] = httpStatus,
+                                ["message"] = "HTTP " + httpStatus,
+                                ["checked_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                                ["duration_ms"] = sw.ElapsedMilliseconds
+                            });
+                    }
+                }
+            }
+            catch (System.Net.Http.HttpRequestException ex)
+            {
+                sw.Stop();
+                string msg = ex.Message ?? "";
+                WriteTrace("HandleHermesHealthCheck: request failed: " + msg);
+                return MakeCockpitResult(requestId, false, "HERMES_UNREACHABLE",
+                    "Hermes 不可达：" + (msg.Length > 120 ? msg.Substring(0, 120) + "..." : msg),
+                    new Dictionary<string, object>
+                    {
+                        ["status"] = "offline",
+                        ["base_url"] = _config?.AgentServer?.BaseUrl ?? "",
+                        ["endpoint"] = _config?.AgentServer?.JobSubmitEndpoint ?? "/v1/runs",
+                        ["http_status"] = null,
+                        ["message"] = msg.Length > 120 ? msg.Substring(0, 120) + "..." : msg,
+                        ["checked_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                        ["duration_ms"] = sw.ElapsedMilliseconds
+                    });
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                WriteTrace("HandleHermesHealthCheck: exception: " + ex.Message);
+                return MakeCockpitResult(requestId, false, "HEALTH_CHECK_ERROR",
+                    "健康检查异常",
+                    new Dictionary<string, object>
+                    {
+                        ["status"] = "error",
+                        ["base_url"] = _config?.AgentServer?.BaseUrl ?? "",
+                        ["endpoint"] = _config?.AgentServer?.JobSubmitEndpoint ?? "/v1/runs",
+                        ["http_status"] = null,
+                        ["message"] = ex.Message ?? "",
+                        ["checked_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                        ["duration_ms"] = sw.ElapsedMilliseconds
+                    });
+            }
         }
 
         #endregion
@@ -3540,6 +3771,26 @@ namespace SwAgentAddin
             });
         }
 
+        /// <summary>
+        /// Push refreshed context to the WebView2 frontend (called by ActiveDocChangeNotify)
+        /// </summary>
+        public void PushContextToWebView(string contextJson)
+        {
+            if (_webView?.CoreWebView2 == null || !_pageLoaded) return;
+            if (string.IsNullOrEmpty(contextJson)) return;
+
+            try
+            {
+                string script = "if (window.MechPilot && window.MechPilot.receiveContext) { window.MechPilot.receiveContext(" + contextJson + "); }";
+                _webView.CoreWebView2.ExecuteScriptAsync(script);
+                SwAgentAddin.WriteTrace("CockpitForm: pushed refreshed context (" + contextJson.Length + " chars)");
+            }
+            catch (Exception ex)
+            {
+                SwAgentAddin.WriteTrace("CockpitForm: push context failed: " + ex.Message);
+            }
+        }
+
         private void OnWebMessageReceived(object sender, Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs e)
         {
             try
@@ -3565,6 +3816,16 @@ namespace SwAgentAddin
                 if (message.Contains("window_maximize"))
                 {
                     ToggleMaximizeRestore();
+                    return;
+                }
+                if (message.Contains("window_pin_toggle"))
+                {
+                    // CKP-004-08: 窗口钉住/置顶 toggle
+                    TopMost = !TopMost;
+                    string pinResult = "{\"request_id\":\"" + ExtractRequestId(message) + "\",\"success\":true,\"data\":{\"pinned\":" + (TopMost ? "true" : "false") + ",\"topmost\":" + (TopMost ? "true" : "false") + "}}";
+                    string pinScript = "if (window.MechPilot && window.MechPilot.receiveResult) { window.MechPilot.receiveResult(" + EscapeForJsInjection(pinResult) + "); }";
+                    _webView.CoreWebView2.ExecuteScriptAsync(pinScript);
+                    SwAgentAddin.WriteTrace("CockpitForm: window_pin_toggle -> TopMost=" + TopMost);
                     return;
                 }
 
@@ -3597,9 +3858,25 @@ namespace SwAgentAddin
         {
             if (_isCustomMaximized)
             {
-                // 还原到正常窗口
+                // CKP-004-09: 还原为当前尺寸 2 倍，居中
+                Rectangle workingArea = Screen.FromControl(this).WorkingArea;
+                int newW = _normalBounds.Width > 0 ? _normalBounds.Width * 2 : 1280;
+                int newH = _normalBounds.Height > 0 ? _normalBounds.Height * 2 : 800;
+                // Clamp to 90% of working area
+                int maxW = (int)(workingArea.Width * 0.9);
+                int maxH = (int)(workingArea.Height * 0.9);
+                if (newW > maxW) newW = maxW;
+                if (newH > maxH) newH = maxH;
+                // Center on working area
+                int newX = workingArea.X + (workingArea.Width - newW) / 2;
+                int newY = workingArea.Y + (workingArea.Height - newH) / 2;
+                if (newX < workingArea.X) newX = workingArea.X;
+                if (newY < workingArea.Y) newY = workingArea.Y;
+
+                _normalBounds = new Rectangle(newX, newY, newW, newH);
                 Bounds = _normalBounds;
                 _isCustomMaximized = false;
+                SwAgentAddin.WriteTrace("CockpitForm: restored to 2x centered " + newW + "x" + newH + " at " + newX + "," + newY);
                 return;
             }
 
@@ -3656,6 +3933,20 @@ namespace SwAgentAddin
             return sb.ToString();
         }
 
+        /// <summary>
+        /// CKP-004-08: Extract request_id from JSON message for window-level command responses.
+        /// </summary>
+        private static string ExtractRequestId(string rawMessage)
+        {
+            try
+            {
+                // Simple regex extraction to avoid full parse for window commands
+                var match = System.Text.RegularExpressions.Regex.Match(rawMessage ?? "", "\"request_id\"\\s*:\\s*\"([^\"]+)\"");
+                return match.Success ? match.Groups[1].Value : "";
+            }
+            catch { return ""; }
+        }
+
         private string GetCockpitUrl()
         {
             if (string.Equals(_config?.CockpitUrlMode, "dev", StringComparison.OrdinalIgnoreCase))
@@ -3682,17 +3973,34 @@ namespace SwAgentAddin
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            // CKP-004-12: 强制允许关闭，不做无条件 Cancel。SW 退出时必须能关。
+            SwAgentAddin.WriteTrace("CockpitForm: OnFormClosing reason=" + e.CloseReason + " cancel=" + e.Cancel);
             try
             {
+                // 清理 TopMost（关闭前复原，避免阻挡其他窗口）
+                TopMost = false;
+
                 if (_webView?.CoreWebView2 != null)
                 {
                     _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
                     _webView.CoreWebView2.NavigationCompleted -= OnNavigationCompleted;
                 }
                 _webView?.Dispose();
+                _webView = null;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                SwAgentAddin.WriteTrace("CockpitForm: OnFormClosing cleanup exception: " + ex.Message);
+            }
+
+            // 永远允许关闭，不 Cancel
             base.OnFormClosing(e);
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            SwAgentAddin.WriteTrace("CockpitForm: OnFormClosed reason=" + e.CloseReason);
+            base.OnFormClosed(e);
         }
     }
 
