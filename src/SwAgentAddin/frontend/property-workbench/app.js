@@ -396,13 +396,24 @@
     }
   }
 
+  function formatHermesFailureMessage(result) {
+    var msg = (result && result.message) || (result && result.error && result.error.message) || 'Hermes 请求失败';
+    if (/401|403|Unauthorized|未授权/i.test(msg)) {
+      return msg + '。请检查 config.json 中 agent_server.api_key（auth_mode=bearer 时必填）。';
+    }
+    if (/404|Not Found/i.test(msg)) {
+      return msg + '。请确认 agent_server 使用 /v1/runs（勿用 /api/jobs 或 MCP :19090）。';
+    }
+    return msg;
+  }
+
   function handleJobSubmitResult(result) {
     var data = getResultData(result);
     if (!isCommandSuccess(result) || !(data.job_id || data.jobId || data.id)) {
       state.activeJob = normalizeJobData(data, state.activeJob);
       state.activeJob.status = 'failed';
       state.activeJob.current_stage = '受理失败';
-      state.activeJob.message = (result && result.message) || (result && result.error && result.error.message) || '任务提交失败，请检查 Hermes 服务或 C# 返回。';
+      state.activeJob.message = formatHermesFailureMessage(result);
       clearJobPollTimer();
       renderJobStatusPanel();
       renderStatusbar();
@@ -418,6 +429,25 @@
     renderStatusbar();
     addAIMessage('system', '任务已受理，Job ID：' + state.activeJob.job_id);
     startJobPolling(state.activeJob.job_id);
+  }
+
+  function handleChatDirectResult(result) {
+    var data = getResultData(result);
+    clearJobPollTimer();
+    if (!state.activeJob) state.activeJob = { source: 'ai.assistant.chat' };
+    state.activeJob.status = 'completed';
+    state.activeJob.accepted = true;
+    state.activeJob.current_stage = '已完成';
+    state.activeJob.progress_percent = 100;
+    renderJobStatusPanel();
+    renderStatusbar();
+    var chatReply = '';
+    if (data && data.content) chatReply = data.content;
+    else if (data && data.output) chatReply = data.output;
+    else if (data && data.message) chatReply = data.message;
+    else if (result && result.message) chatReply = result.message;
+    if (!chatReply) chatReply = 'Agent 已响应（无文本内容）';
+    addAIMessage('ai', chatReply);
   }
 
   function handleJobPollResult(result) {
@@ -440,10 +470,38 @@
     renderStatusbar();
     if (isTerminalJobStatus(state.activeJob.status)) {
       clearJobPollTimer();
-      var summary = '任务完成：' + statusLabel(state.activeJob.status);
-      if (state.activeJob.completed_items != null) summary += '，成功 ' + state.activeJob.completed_items;
-      if (state.activeJob.failed_items != null && state.activeJob.failed_items > 0) summary += '，失败 ' + state.activeJob.failed_items;
-      addAIMessage('system', summary);
+      // For normal AI chat, show result as AI bubble
+      if (state.activeJob.source === 'ai.assistant.chat') {
+        if (state.activeJob.status === 'completed' || state.activeJob.status === 'partial_failed') {
+          var chatReply = '';
+          if (data.content) {
+            chatReply = data.content;
+          } else if (data.result && typeof data.result === 'object') {
+            chatReply = data.result.content || data.result.output || data.result.message || '';
+          } else if (data.result && typeof data.result === 'string') {
+            chatReply = data.result;
+          } else if (data.output) {
+            chatReply = data.output;
+          } else if (data.message) {
+            chatReply = data.message;
+          }
+          if (state.activeJob.results && Array.isArray(state.activeJob.results) && state.activeJob.results.length > 0) {
+            var first = state.activeJob.results[0];
+            if (first.content) chatReply = first.content;
+            else if (first.output) chatReply = first.output;
+            else if (first.result) chatReply = typeof first.result === 'string' ? first.result : JSON.stringify(first.result);
+          }
+          if (!chatReply) chatReply = 'Agent 处理完成（无文本返回），状态：' + statusLabel(state.activeJob.status);
+          addAIMessage('ai', chatReply);
+        } else {
+          addAIMessage('system', '对话处理' + statusLabel(state.activeJob.status) + '：' + (state.activeJob.message || ''));
+        }
+      } else {
+        var summary = '任务完成：' + statusLabel(state.activeJob.status);
+        if (state.activeJob.completed_items != null) summary += '，成功 ' + state.activeJob.completed_items;
+        if (state.activeJob.failed_items != null && state.activeJob.failed_items > 0) summary += '，失败 ' + state.activeJob.failed_items;
+        addAIMessage('system', summary);
+      }
     }
   }
 
@@ -725,6 +783,13 @@
           renderMaterialResults(result);
           var count = extractResultItems(result).length;
           addAIMessage('system', '物料检索完成，共 ' + count + ' 条结果');
+        } else if (cmd === 'ai.assistant.chat') {
+          var chatData = getResultData(result);
+          if (isCommandSuccess(result) && !(chatData.job_id || chatData.jobId || chatData.id)) {
+            handleChatDirectResult(result);
+          } else {
+            handleJobSubmitResult(result);
+          }
         } else if (cmd === 'material.properties.review.submit' || cmd === 'agent.job.submit' || (!cmd && state.activeJob && state.activeJob.status === 'submitting' && (data.job_id || data.jobId || data.id))) {
           handleJobSubmitResult(result);
         } else if (cmd === 'agent.job.poll' || (!cmd && state.activeJob && state.activeJob.job_id && (data.job_id === state.activeJob.job_id || data.jobId === state.activeJob.job_id))) {
@@ -764,7 +829,24 @@
         } else {
           console.log('[MechPilot] sendCommand (mock):', type, payload);
           // Mock 环境下直接返回物料检索结果
-          if (type === 'ai.material.search') {
+          if (type === 'ai.assistant.chat') {
+            setTimeout(function () {
+              window.MechPilot.receiveResult({
+                request_id: requestId,
+                command: 'ai.assistant.chat',
+                ok: true,
+                data: {
+                  job_id: 'job-mock-chat-' + Date.now(),
+                  accepted: true,
+                  status: 'queued',
+                  queue_position: 1,
+                  estimated_wait_seconds: 5,
+                  progress_percent: 0,
+                  current_stage: '排队中'
+                }
+              });
+            }, 400);
+          } else if (type === 'ai.material.search') {
             setTimeout(function () {
               window.MechPilot.receiveResult({
                 request_id: requestId,
@@ -1012,15 +1094,34 @@
       contextMode: state.settings.contextMode
     };
 
-    window.MechPilot.sendCommand('ai.assistant.chat', payload);
+    // Set up active job state for chat (same pattern as property review)
+    clearJobPollTimer();
+    state.activeJob = {
+      job_id: '',
+      accepted: false,
+      status: 'submitting',
+      progress_percent: 0,
+      current_stage: '提交中',
+      source: 'ai.assistant.chat',
+      chat_message: text,
+      submitted_at: new Date(),
+      request_id: null,
+      payload: payload
+    };
+    renderJobStatusPanel();
+    renderStatusbar();
 
-    setTimeout(function () {
-      var reply = '收到：' + text + '\n当前页面：' + PAGES[state.currentPage].title;
-      if (c) reply += '\n当前文件：' + c.fileName;
-      if (sel) reply += '\n选中对象：' + sel.name;
-      reply += '\n\n⏳ Agent 疯狂输出中，请稍后…';
-      addAIMessage('ai', reply);
-    }, 400);
+    try {
+      state.activeJob.request_id = window.MechPilot.sendCommand('ai.assistant.chat', payload);
+      addAIMessage('system', '对话已发送，等待 Agent 响应…');
+    } catch (e) {
+      state.activeJob.status = 'failed';
+      state.activeJob.current_stage = '提交失败';
+      state.activeJob.message = '发送失败: ' + e.message;
+      renderJobStatusPanel();
+      renderStatusbar();
+      addAIMessage('system', state.activeJob.message);
+    }
   }
 
   // ══════════════════════════════════════════════════════════

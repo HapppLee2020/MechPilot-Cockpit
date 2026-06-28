@@ -21,8 +21,8 @@ namespace SwAgentAddin
         public string ResultEndpointTemplate { get; set; } = "/api/v1/task/{task_id}/result";
         public string StreamEndpointTemplate { get; set; } = "/api/v1/task/{task_id}/stream";
         public string InvokeEndpoint { get; set; } = "/api/v1/agent/invoke";
-        public string JobSubmitEndpoint { get; set; } = "/api/jobs";
-        public string JobStatusEndpointTemplate { get; set; } = "/api/jobs/{job_id}";
+        public string JobSubmitEndpoint { get; set; } = "/v1/runs";
+        public string JobStatusEndpointTemplate { get; set; } = "/v1/runs/{job_id}";
         public int JobPollIntervalSeconds { get; set; } = 3;
         public int TimeoutSeconds { get; set; } = 120;
         public int PollIntervalSeconds { get; set; } = 3;
@@ -280,18 +280,27 @@ namespace SwAgentAddin
                 bool isRunsEndpoint = url.IndexOf("/v1/runs", StringComparison.OrdinalIgnoreCase) >= 0;
                 if (isRunsEndpoint)
                 {
+                    var metadata = new Dictionary<string, object>
+                    {
+                        ["source"] = "MechPilot",
+                        ["job_type"] = string.IsNullOrWhiteSpace(jobType) ? "general" : jobType,
+                        ["request_id"] = requestId,
+                        ["context_mode"] = contextMode ?? _server.ContextModeDefault,
+                        ["machine"] = Environment.MachineName
+                    };
+                    if (string.Equals(jobType, "assistant.chat", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string chatMessage = ExtractPayloadString(payload, "message");
+                        if (!string.IsNullOrWhiteSpace(chatMessage))
+                            metadata["message"] = chatMessage.Trim();
+                    }
                     body = new Dictionary<string, object>
                     {
                         ["input"] = BuildRunInput(jobType, payload),
-                        ["instructions"] = "You are MechPilot Agent. Analyze the SolidWorks/Cockpit task context and return concise Chinese findings and recommended actions.",
-                        ["metadata"] = new Dictionary<string, object>
-                        {
-                            ["source"] = "MechPilot",
-                            ["job_type"] = string.IsNullOrWhiteSpace(jobType) ? "general" : jobType,
-                            ["request_id"] = requestId,
-                            ["context_mode"] = contextMode ?? _server.ContextModeDefault,
-                            ["machine"] = Environment.MachineName
-                        }
+                        ["instructions"] = string.Equals(jobType, "assistant.chat", StringComparison.OrdinalIgnoreCase)
+                            ? "You are MechPilot AI assistant inside SolidWorks Cockpit. Answer the user message in concise Chinese."
+                            : "You are MechPilot Agent. Analyze the SolidWorks/Cockpit task context and return concise Chinese findings and recommended actions.",
+                        ["metadata"] = metadata
                     };
                 }
                 else
@@ -558,21 +567,41 @@ namespace SwAgentAddin
 
         private static string BuildRunInput(string jobType, object payload)
         {
-            var serializer = new JavaScriptSerializer();
-            string payloadJson;
-            try
+            if (string.Equals(jobType, "assistant.chat", StringComparison.OrdinalIgnoreCase))
             {
-                payloadJson = serializer.Serialize(payload ?? new Dictionary<string, object>());
-            }
-            catch
-            {
-                payloadJson = Convert.ToString(payload) ?? "";
+                string message = ExtractPayloadString(payload, "message");
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    return "User message:\n" + message.Trim()
+                        + "\n\nReply in concise Chinese. Optional Cockpit context JSON follows:\n"
+                        + SerializePayloadJson(payload);
+                }
             }
 
             return "MechPilot Cockpit submitted an immediate execution task.\n"
                 + "Task type: " + (string.IsNullOrWhiteSpace(jobType) ? "general" : jobType) + "\n"
                 + "Analyze/review the following JSON context and return concise Chinese findings and recommended actions.\n"
-                + payloadJson;
+                + SerializePayloadJson(payload);
+        }
+
+        private static string ExtractPayloadString(object payload, string key)
+        {
+            if (payload is Dictionary<string, object> dict && dict.ContainsKey(key))
+                return Convert.ToString(dict[key]) ?? "";
+            return "";
+        }
+
+        private static string SerializePayloadJson(object payload)
+        {
+            var serializer = new JavaScriptSerializer();
+            try
+            {
+                return serializer.Serialize(payload ?? new Dictionary<string, object>());
+            }
+            catch
+            {
+                return Convert.ToString(payload) ?? "";
+            }
         }
 
         private void AddAuthHeader(StringContent content)

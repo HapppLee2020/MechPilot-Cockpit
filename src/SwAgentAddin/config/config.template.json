@@ -1,0 +1,83 @@
+{
+  "execution_mode": "local",
+
+  "online_selection_url": "",
+  "custom_button_1_title": "PDM系统",
+  "custom_button_1_url": "",
+  "custom_button_2_title": "PDM看板",
+  "custom_button_2_url": "",
+  "custom_button_3_title": "ERP系统",
+  "custom_button_3_url": "",
+  "custom_button_4_title": "BBS论坛",
+  "custom_button_4_url": "",
+  "custom_button_5_title": "数据平台",
+  "custom_button_5_url": "",
+
+  "server_url": "http://__HERMES_HOST__:5000",
+  "engineer_id": "davis",
+  "poll_interval_seconds": 3,
+  "request_timeout_seconds": 120,
+  "enable_feishu_notify": false,
+  "log_level": 2,
+  "auto_show_taskpane": true,
+  "confirm_before_write": true,
+  "multi_select_behavior": "show_form",
+  "local_rules_file": "rules.local.json",
+
+  "read_property_names": [
+    "物料名称",
+    "图号",
+    "材料",
+    "重量",
+    "表面处理",
+    "处理状态",
+    "处理人",
+    "处理日期"
+  ],
+  "read_show_all_properties": false,
+  "read_show_raw_value_default": false,
+  "read_form_width": 2700,
+  "read_form_height": 1500,
+  "read_show_assembly_tree_default": true,
+  "read_enable_column_filters": true,
+  "read_auto_fit_columns": true,
+
+  "cockpit_enabled": true,
+  "cockpit_url_mode": "local",
+  "cockpit_entry": "frontend/property-workbench/index.html",
+  "cockpit_dev_url": "http://127.0.0.1:5173",
+  "cockpit_prefer_webview2": true,
+  "cockpit_fallback_to_winforms": true,
+  "cockpit_schema_version": "mechpilot.cockpit.context.v1",
+
+  "agent_server": {
+    "provider": "hermes",
+    "base_url": "http://__HERMES_HOST__:5000",
+    "auth_mode": "bearer",
+    "api_key": "",
+    "invoke_endpoint": "/api/v1/agent/invoke",
+    "task_endpoint": "/api/v1/task",
+    "status_endpoint_template": "/api/v1/task/{task_id}",
+    "result_endpoint_template": "/api/v1/task/{task_id}/result",
+    "stream_endpoint_template": "/api/v1/task/{task_id}/stream",
+    "job_submit_endpoint": "/v1/runs",
+    "job_status_endpoint_template": "/v1/runs/{job_id}",
+    "job_submit_endpoint_legacy_DO_NOT_USE": "/api/jobs",
+    "timeout_seconds": 120,
+    "poll_interval_seconds": 3,
+    "job_poll_interval_seconds": 3,
+    "context_mode_default": "summary"
+  },
+
+  "hindsight": {
+    "enabled": true,
+    "base_url": "http://__HERMES_HOST__:8888",
+    "api_key": "",
+    "bank": "davis",
+    "source_db_path": "D:\\SWAgentAddin\\rag\\materials.sqlite.db",
+    "top_k": 5,
+    "score_threshold": 0.35,
+    "timeout_seconds": 30,
+    "explain_with_hermes": false
+  }
+}

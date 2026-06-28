@@ -3,7 +3,7 @@ setlocal
 
 set "ADDIN_GUID=E8F5C9A2-3D14-4E7F-9A1B-C6D5E4F3A2B1"
 set "INSTALL_DIR=D:\SWAgentAddin"
-set "SOURCE_DIR=%~dp0..\..\..\deploy\"
+set "SOURCE_DIR=%~dp0..\..\deploy\"
 set "TARGET_DLL=%INSTALL_DIR%\SwAgentAddin.dll"
 set "REGASM=%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
 
@@ -55,10 +55,26 @@ copy /Y "%SOURCE_DIR%frontend\taskpane.html" "%INSTALL_DIR%\frontend\" >nul 2>&1
 if exist "%SOURCE_DIR%frontend\cockpit-contracts" xcopy /Y /E /I "%SOURCE_DIR%frontend\cockpit-contracts" "%INSTALL_DIR%\frontend\cockpit-contracts" >nul
 if exist "%SOURCE_DIR%frontend\property-workbench" xcopy /Y /E /I "%SOURCE_DIR%frontend\property-workbench" "%INSTALL_DIR%\frontend\property-workbench" >nul
 
-REM --- config ---
+REM --- config (PROTECT existing target config) ---
 if not exist "%INSTALL_DIR%\config" mkdir "%INSTALL_DIR%\config"
-if not exist "%INSTALL_DIR%\config\config.json" if exist "%SOURCE_DIR%config\config.json" copy /Y "%SOURCE_DIR%config\config.json" "%INSTALL_DIR%\config\" >nul
-if exist "%SOURCE_DIR%config\rules.local.json" copy /Y "%SOURCE_DIR%config\rules.local.json" "%INSTALL_DIR%\config\" >nul
+if not exist "%INSTALL_DIR%\config\config.json" (
+    if exist "%SOURCE_DIR%config\config.template.json" (
+        copy /Y "%SOURCE_DIR%config\config.template.json" "%INSTALL_DIR%\config\config.json" >nul
+        echo       [>>] Config template deployed - please edit config.json before first use
+        call "%SOURCE_DIR%validate_config_template.bat" "%INSTALL_DIR%\config\config.json"
+    ) else if exist "%SOURCE_DIR%config\config.json" (
+        copy /Y "%SOURCE_DIR%config\config.json" "%INSTALL_DIR%\config\" >nul
+        echo       [WARN] Legacy config.json copied - prefer config.template.json for new installs
+    )
+) else (
+    echo       [SKIP] Config already exists, preserving target machine config
+)
+if exist "%INSTALL_DIR%\config\rules.local.json" (
+    echo       [SKIP] rules.local.json already exists, preserving target machine rules
+) else if exist "%SOURCE_DIR%config\rules.local.json" (
+    copy /Y "%SOURCE_DIR%config\rules.local.json" "%INSTALL_DIR%\config\" >nul
+    echo       [>>] rules.local.json deployed
+)
 
 REM --- assets/icons ---
 if not exist "%INSTALL_DIR%\assets\icons" mkdir "%INSTALL_DIR%\assets\icons"
