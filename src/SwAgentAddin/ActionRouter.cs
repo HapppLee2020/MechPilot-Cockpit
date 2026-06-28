@@ -59,6 +59,10 @@ namespace SwAgentAddin
             string jobType = "";
             if (cmd.Payload.ContainsKey("job_type")) jobType = Convert.ToString(cmd.Payload["job_type"]);
             else if (cmd.Payload.ContainsKey("task_type")) jobType = Convert.ToString(cmd.Payload["task_type"]);
+            else if (string.Equals(legacyCmd, "ai.assistant.chat", StringComparison.OrdinalIgnoreCase))
+                jobType = "assistant.chat";
+            else if (string.Equals(cmd.Feature, "assistant", StringComparison.OrdinalIgnoreCase))
+                jobType = "assistant.chat";
             else jobType = "material.properties.review";
 
             var jobResult = await _hermesClient.SubmitJobAsync(jobType, cmd.Payload).ConfigureAwait(false);
@@ -121,8 +125,16 @@ namespace SwAgentAddin
             if (string.Equals(legacyCmd, "agent.job.submit", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(legacyCmd, "material.properties.review.submit", StringComparison.OrdinalIgnoreCase))
                 return true;
-            return string.Equals(feature, "material.properties.review", StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(action, "submit", StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(feature, "material.properties.review", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(action, "submit", StringComparison.OrdinalIgnoreCase))
+                return true;
+            // Normal AI chat also goes through job queue (/v1/runs)
+            if (string.Equals(legacyCmd, "ai.assistant.chat", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (string.Equals(feature, "assistant", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(action, "chat", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return false;
         }
 
         private static bool IsJobPollCommand(string feature, string action, string legacyCmd)
