@@ -25,14 +25,13 @@
   "local_rules_file": "rules.local.json",
 
   "read_property_names": [
+    "物料编码",
     "物料名称",
-    "图号",
-    "材料",
-    "重量",
+    "规格型号",
+    "材质",
     "表面处理",
-    "处理状态",
-    "处理人",
-    "处理日期"
+    "设计人",
+    "物料状态"
   ],
   "read_show_all_properties": false,
   "read_show_raw_value_default": false,
@@ -62,6 +61,7 @@
     "stream_endpoint_template": "/api/v1/task/{task_id}/stream",
     "job_submit_endpoint": "/v1/runs",
     "job_status_endpoint_template": "/v1/runs/{job_id}",
+    "job_submit_endpoint_legacy_DO_NOT_USE": "/api/jobs",
     "timeout_seconds": 120,
     "poll_interval_seconds": 3,
     "job_poll_interval_seconds": 3,

@@ -49,6 +49,11 @@
       <HintPath>$(SW_HOME)\SolidWorks.Interop.swpublished.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <Reference Include="EPDM.Interop.epdm">
+      <HintPath>$(MSBuildProjectDirectory)\..\..\..\sw-remote-mcp-master\backend\refs\EPDM.Interop.epdm.dll</HintPath>
+      <Private>true</Private>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+    </Reference>
     <!-- .NET Framework 基础类库 -->
     <Reference Include="System" />
     <Reference Include="System.Core" />

@@ -294,6 +294,8 @@ namespace SwAgentAddin
                         if (!string.IsNullOrWhiteSpace(chatMessage))
                             metadata["message"] = chatMessage.Trim();
                     }
+                    if (payload != null)
+                        metadata["payload"] = payload;
                     body = new Dictionary<string, object>
                     {
                         ["input"] = BuildRunInput(jobType, payload),
@@ -423,21 +425,10 @@ namespace SwAgentAddin
                             ["status"] = GetValue(parsed, "status", "unknown"),
                             ["queue_position"] = GetValue(parsed, "queue_position", null),
                             ["estimated_wait_seconds"] = GetValue(parsed, "estimated_wait_seconds", null),
-                            ["poll_interval_seconds"] = _server.JobPollIntervalSeconds
+                            ["poll_interval_seconds"] = _server.JobPollIntervalSeconds,
+                            ["raw"] = result
                         };
-
-                        // Extract AI response content for chat and other jobs
-                        if (parsed.ContainsKey("output")) data["output"] = parsed["output"];
-                        if (parsed.ContainsKey("content")) data["content"] = parsed["content"];
-                        if (parsed.ContainsKey("result")) data["result"] = parsed["result"];
-                        if (parsed.ContainsKey("results")) data["results"] = parsed["results"];
-                        if (parsed.ContainsKey("message")) data["message"] = parsed["message"];
-                        if (parsed.ContainsKey("completed_items")) data["completed_items"] = parsed["completed_items"];
-                        if (parsed.ContainsKey("failed_items")) data["failed_items"] = parsed["failed_items"];
-                        if (parsed.ContainsKey("total_items")) data["total_items"] = parsed["total_items"];
-                        if (parsed.ContainsKey("progress_percent")) data["progress_percent"] = parsed["progress_percent"];
-                        if (parsed.ContainsKey("current_stage")) data["current_stage"] = parsed["current_stage"];
-
+                        MergeHermesPollFields(parsed, data);
                         return MakeJobResult(true, null, null, data);
                     }
 
@@ -594,7 +585,8 @@ namespace SwAgentAddin
 
             return "MechPilot Cockpit submitted an immediate execution task.\n"
                 + "Task type: " + (string.IsNullOrWhiteSpace(jobType) ? "general" : jobType) + "\n"
-                + "Analyze/review the following JSON context and return concise Chinese findings and recommended actions.\n"
+                + "Structured payload is attached in metadata.payload; use it as the authoritative task context.\n"
+                + "Legacy JSON context (fallback only):\n"
                 + SerializePayloadJson(payload);
         }
 
@@ -642,6 +634,28 @@ namespace SwAgentAddin
                         ? "Bearer " + _server.ApiKey
                         : _server.ApiKey);
             }
+        }
+
+        private static void MergeHermesPollFields(Dictionary<string, object> parsed, Dictionary<string, object> data)
+        {
+            if (parsed == null || data == null) return;
+
+            string[] keys =
+            {
+                "output", "results", "structured_result", "result", "error", "message",
+                "progress_percent", "progressPercent", "current_stage", "currentStage",
+                "completed_items", "completedItems", "failed_items", "failedItems",
+                "total_items", "totalItems", "last_event", "lastEvent"
+            };
+            foreach (var key in keys)
+            {
+                if (parsed.ContainsKey(key) && parsed[key] != null && !data.ContainsKey(key))
+                    data[key] = parsed[key];
+            }
+
+            // Hermes /v1/runs may nest agent payload under structured_result while output is JSON text
+            if (!data.ContainsKey("results") && parsed.ContainsKey("structured_result") && parsed["structured_result"] != null)
+                data["results"] = parsed["structured_result"];
         }
 
         private static Dictionary<string, object> MakeJobResult(bool success, string requestId, string errorMsg,

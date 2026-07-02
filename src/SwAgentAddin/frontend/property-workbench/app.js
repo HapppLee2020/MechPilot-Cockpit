@@ -41,7 +41,8 @@
     selectedNode: null,        // 当前高亮节点（右侧摘要展示）
     checkedNodeIds: new Set(), // 勾选节点（批量属性审核等）
     expandedSet: new Set(),    // 设计树展开状态
-    aiPanelOpen: true,
+    aiPanelOpen: false,          // CKP-004-22: AI Panel 默认折叠
+    sidebarCollapsed: true,    // CKP-004-19: 左侧导航栏默认折叠
     aiMessages: [],
     hermesOnline: false,      // legacy, keep for compat; prefer hermesStatus
     // CKP-004-10: Hermes status model
@@ -56,6 +57,7 @@
     },
     ragOnline: false,          // RAG 服务状态
     tasks: [],
+    submittedJobs: [],
     activeJob: null,
     // Context snapshot model (CKP-004-04)
     snapshots: [],
@@ -65,6 +67,15 @@
     currentTaskId: null,       // 当前选中的任务 ID
     taskQueueFilter: 'all',    // CKP-004-13: 'all' | 'draft' | 'queued' | 'running' | 'completed'
     expandedTaskIds: {},       // CKP-004-13: taskId -> true for detail expand
+    taskQueueCollapsed: false,   // CKP-004-22: 任务队列折叠
+    treeFilters: {                     // 设计树筛选
+      lightweight: true,   // 轻化
+      hidden: false,       // 隐藏
+      suppressed: false,   // 压缩
+      envelope: false,     // 封套
+      virtualComp: false,  // 虚拟
+      readOnly: true       // 只读
+    },
     toastMessage: null,        // 页面内 toast 提示
     windowPinned: false,       // CKP-004-08: 钉住/置顶状态
     settings: {
@@ -97,10 +108,198 @@
 
   function formatTime(dt) {
     if (!dt) return '';
-    var d = new Date(dt);
-    if (isNaN(d.getTime())) return String(dt);
+    var d = parseDateValue(dt);
+    if (!d) return String(dt);
     var pad = function (n) { return n < 10 ? '0' + n : n; };
     return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
+  function formatDateTime(dt) {
+    var d = parseDateValue(dt);
+    if (!d) return '-';
+    var pad = function (n) { return n < 10 ? '0' + n : n; };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+      pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
+  function parseDateValue(v) {
+    if (v == null || v === '') return null;
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function formatDurationMs(ms) {
+    if (ms == null || isNaN(ms) || ms < 0) return '-';
+    ms = Math.round(ms);
+    if (ms < 1000) return ms + 'ms';
+    var sec = Math.floor(ms / 1000);
+    if (sec < 60) return sec + 's';
+    var min = Math.floor(sec / 60);
+    sec = sec % 60;
+    if (min < 60) return min + 'm' + (sec > 0 ? ' ' + sec + 's' : '');
+    var hr = Math.floor(min / 60);
+    min = min % 60;
+    return hr + 'h' + (min > 0 ? ' ' + min + 'm' : '');
+  }
+
+  function pickTimestamp(obj) {
+    obj = obj || {};
+    var keys = ['completed_at', 'completedAt', 'finished_at', 'finishedAt',
+      'started_at', 'startedAt', 'start_time', 'startTime',
+      'submitted_at', 'submittedAt', 'created_at', 'createdAt', 'updated_at', 'updatedAt'];
+    for (var i = 0; i < keys.length; i++) {
+      var d = parseDateValue(obj[keys[i]]);
+      if (d) return d;
+    }
+    return null;
+  }
+
+  function normalizeTaskTimes(source) {
+    source = source || {};
+    return {
+      submitted_at: source.submitted_at || source.submittedAt || null,
+      started_at: source.started_at || source.startedAt || null,
+      completed_at: source.completed_at || source.completedAt || null,
+      created_at: source.created_at || source.createdAt || null
+    };
+  }
+
+  function syncJobTimestamps(job, data) {
+    job = job || {};
+    data = data || {};
+    var submitted = parseDateValue(data.submitted_at || data.submittedAt || data.created_at || data.createdAt) ||
+      parseDateValue(job.submitted_at);
+    if (!job.submitted_at && submitted) job.submitted_at = submitted.toISOString();
+
+    var started = parseDateValue(data.started_at || data.startedAt || data.start_time || data.startTime);
+    if (started) {
+      job.started_at = started.toISOString();
+    } else if (!job.started_at && (job.status === 'running' || data.status === 'running')) {
+      job.started_at = new Date().toISOString();
+    }
+
+    var completed = parseDateValue(data.completed_at || data.completedAt || data.finished_at || data.finishedAt || data.end_time || data.endTime);
+    if (completed) {
+      job.completed_at = completed.toISOString();
+    } else if (!job.completed_at && isTerminalJobStatus(job.status || data.status)) {
+      job.completed_at = new Date().toISOString();
+    }
+    return job;
+  }
+
+  function syncDraftTimestampsFromActiveJob() {
+    var aj = state.activeJob;
+    if (!aj) return;
+    var changed = false;
+    state.taskDrafts.forEach(function (d) {
+      if (d.taskId !== state.currentTaskId && aj.job_id && d.submittedJobId !== aj.job_id) return;
+      if (aj.submitted_at && d.submittedAt !== aj.submitted_at) { d.submittedAt = aj.submitted_at; changed = true; }
+      if (aj.started_at && d.startedAt !== aj.started_at) { d.startedAt = aj.started_at; changed = true; }
+      if (aj.completed_at && d.completedAt !== aj.completed_at) { d.completedAt = aj.completed_at; changed = true; }
+    });
+    if (changed) persistTaskDrafts();
+  }
+
+  function getTaskDurationText(times, status) {
+    times = normalizeTaskTimes(times);
+    var submit = parseDateValue(times.submitted_at || times.created_at);
+    var start = parseDateValue(times.started_at) || submit;
+    var end = parseDateValue(times.completed_at);
+    if (start && end) return formatDurationMs(end.getTime() - start.getTime());
+    if (start && (status === 'running' || status === 'submitting' || status === 'queued')) {
+      return formatDurationMs(Date.now() - start.getTime()) + '…';
+    }
+    return '-';
+  }
+
+  function getTaskQueueTimeLabel(times, status) {
+    times = normalizeTaskTimes(times);
+    var t = times.completed_at || times.started_at || times.submitted_at || times.created_at;
+    if (!t) return '-';
+    return formatTime(t);
+  }
+
+  function buildTaskTimingDetailRows(times, status) {
+    times = normalizeTaskTimes(times);
+    var rows = [];
+    if (times.created_at) rows.push(['创建时间', formatDateTime(times.created_at)]);
+    rows.push(['提交时间', formatDateTime(times.submitted_at || times.created_at)]);
+    rows.push(['开始时间', formatDateTime(times.started_at)]);
+    rows.push(['完成时间', formatDateTime(times.completed_at)]);
+    rows.push(['总耗时', getTaskDurationText(times, status)]);
+    return rows;
+  }
+
+  function getEntryTimes(entry) {
+    if (!entry) return normalizeTaskTimes({});
+    if (entry.times) return normalizeTaskTimes(entry.times);
+    if (entry.draft) {
+      return normalizeTaskTimes({
+        created_at: entry.draft.createdAt,
+        submitted_at: entry.draft.submittedAt,
+        started_at: entry.draft.startedAt,
+        completed_at: entry.draft.completedAt
+      });
+    }
+    if (entry.isActiveJob && state.activeJob) return normalizeTaskTimes(state.activeJob);
+    return normalizeTaskTimes({});
+  }
+
+  function buildTaskTimeTitle(times, status) {
+    return buildTaskTimingDetailRows(times, status).map(function (row) {
+      return row[0] + ': ' + row[1];
+    }).join('\n');
+  }
+
+  function getActiveJobItemCount(aj) {
+    aj = aj || {};
+    if (aj.total_items != null && Number(aj.total_items) > 0) return Number(aj.total_items);
+    if (aj.instanceCount != null && Number(aj.instanceCount) > 0) return Number(aj.instanceCount);
+    if (aj.reviewItems && aj.reviewItems.length) return aj.reviewItems.length;
+    if (aj.summary && aj.summary.total != null) return Number(aj.summary.total);
+    if (aj.payload && aj.payload.components && aj.payload.components.length) return aj.payload.components.length;
+    return 0;
+  }
+
+  function getAgentReviewContext(aj) {
+    aj = aj || {};
+    var agent = aj.agentResult || {};
+    return {
+      executionMode: aj.executionMode || agent.execution_mode || '',
+      summary: aj.summary || agent.summary || null,
+      items: aj.reviewItems || agent.items || []
+    };
+  }
+
+  function buildAgentReviewDetailRows(aj) {
+    var ctx = getAgentReviewContext(aj);
+    var rows = [];
+    if (ctx.executionMode) rows.push(['执行模式', ctx.executionMode]);
+    var summary = ctx.summary;
+    if (summary) {
+      rows.push(['审核汇总', '共 ' + (summary.total != null ? summary.total : ctx.items.length) +
+        ' / 通过 ' + (summary.pass != null ? summary.pass : 0) +
+        ' / 待修 ' + (summary.fix != null ? summary.fix : 0) +
+        ' / 跳过 ' + (summary.skip != null ? summary.skip : 0) +
+        ' / 失败 ' + (summary.fail != null ? summary.fail : 0)]);
+    }
+    if (ctx.items && ctx.items.length) {
+      var reasonCounts = {};
+      ctx.items.forEach(function (it) {
+        var d = String((it && it.decision) || 'unknown');
+        var r = String((it && it.reason) || d);
+        reasonCounts[d + ' · ' + r] = (reasonCounts[d + ' · ' + r] || 0) + 1;
+      });
+      var reasonParts = Object.keys(reasonCounts).map(function (k) {
+        return k + ' ×' + reasonCounts[k];
+      });
+      if (reasonParts.length) rows.push(['跳过/决策原因', reasonParts.join('；')]);
+    }
+    if (ctx.executionMode === 'mcp') {
+      rows.push(['MCP 说明', 'Hermes 已完成计划生成；当前为 dry-run 预演，未授权前不会调用 MCP 写 PDM']);
+    }
+    return rows;
   }
 
   function countNodes(node) {
@@ -114,7 +313,7 @@
 
   function countParts(node) {
     if (!node) return 0;
-    var n = (node.type === 'part' || node.docType === '零件') ? 1 : 0;
+    var n = isPartNode(node) ? 1 : 0;
     if (node.children) {
       for (var i = 0; i < node.children.length; i++) n += countParts(node.children[i]);
     }
@@ -148,19 +347,88 @@
 
   function isPartNode(node) {
     if (!node) return false;
-    return node.type === 'part' || node.docType === '零件';
+    if (isAssemblyNode(node)) return false;
+    return node.type === 'part' || node.type === '零件' || node.docType === '零件' || node.isPart === true;
   }
 
   function isAssemblyNode(node) {
     if (!node) return false;
-    return node.type === 'assembly' || node.docType === '装配体' ||
-      (node.children && node.children.length > 0);
+    return node.type === 'assembly' || node.type === '装配体' || node.docType === '装配体' || node.isAssembly === true;
+  }
+
+  function isNodeInPdmVault(node) {
+    if (!node) return false;
+    return node.isInPdmVault === true || node.IsInPdmVault === true;
+  }
+
+  function getNodeIconHtml(node) {
+    return isAssemblyNode(node) ? ICONS.assembly : ICONS.part;
+  }
+
+  function getNodeIconClass(node) {
+    return 'tree-icon' + (isNodeInPdmVault(node) ? ' tree-icon-pdm' : '');
+  }
+
+  function normalizeTreeDocType(node, row) {
+    node = node || {};
+    row = row || {};
+    if (node.IsAssembly || node.isAssembly) return 'assembly';
+    var raw = node.DocType || node.docType || row.DocType || row.docType || '';
+    if (raw === '装配体') return 'assembly';
+    if (raw === '零件') return 'part';
+    return raw || 'part';
+  }
+
+  function normalizeFilePath(fp) {
+    if (!fp) return '';
+    fp = String(fp).trim();
+    if (fp.indexOf('|') >= 0) return '';
+    if (fp === '不可用' || fp === 'N/A' || fp === '') return '';
+    return fp.replace(/\//g, '\\');
+  }
+
+  function extractPivotFilePart(pivotKey) {
+    if (!pivotKey) return '';
+    var parts = String(pivotKey).split('|');
+    for (var i = parts.length - 1; i >= 0; i--) {
+      var seg = (parts[i] || '').trim();
+      if (!seg) continue;
+      if (/\.(sldprt|sldasm|slddrw)$/i.test(seg) || seg.indexOf('\\') >= 0 || seg.indexOf('/') >= 0) {
+        return normalizeFilePath(seg);
+      }
+    }
+    return (parts[parts.length - 1] || '').trim();
+  }
+
+  function isUnkeyedGroupKey(groupKey) {
+    return !groupKey || groupKey.indexOf('unkeyed:') === 0;
   }
 
   function isSubmittableNode(node) {
     if (!node || !isPartNode(node)) return false;
-    // TODO: 待 C# 提供 isHidden / isEnvelope / bomExcluded 等字段后再过滤
+    // 装配体不能被添加到属性工作区
+    if (isAssemblyNode(node)) return false;
+    // 应用筛选器
+    if (!isNodePassingFilters(node)) return false;
     return true;
+  }
+
+  // 筛选器检查
+  function isNodePassingFilters(node) {
+    if (!node) return true;
+    var f = state.treeFilters;
+    if (node.isLightweight && !f.lightweight) return false;
+    if (node.isSuppressed && !f.suppressed) return false;
+    if (node.isHidden && !f.hidden) return false;
+    if (node.isEnvelope && !f.envelope) return false;
+    if (node.isVirtual && !f.virtualComp) return false;
+    if (node.isReadOnly && !f.readOnly) return false;
+    return true;
+  }
+
+  // 构建时节点可见性（统一由筛选器管理）
+  function isNodeVisible(node) {
+    return isNodePassingFilters(node);
   }
 
   // CKP-004-18: 统一提取组件显示名
@@ -169,9 +437,12 @@
   function getCleanDisplayName(node, row) {
     node = node || {};
     row = row || {};
-    // 1. 首选 DisplayName / Name（SW 组件名，如 "Bracket-1"）
-    var raw = node.DisplayName || node.displayName || node.Name || node.name
-           || row.DisplayName || row.displayName || '';
+    // 1. 首选 DisplayName / Name / DocumentName（SW 组件名，如 "Bracket-1"）
+    var raw = node.DisplayName || node.displayName || node.Name
+           || node.DocumentName || node.documentName
+           || row.DisplayName || row.displayName || row.LocalComponentName || row.localComponentName || '';
+    // 已 normalize 的 node.name 仅作末位回退，避免误用 pivotKey 类字符串
+    if (!raw) raw = node.name || '';
     if (raw) {
       // 如果 raw 包含 "|", 取最后一段（PivotKey fallthrough）
       if (raw.indexOf('|') >= 0) raw = raw.split('|').pop();
@@ -219,23 +490,80 @@
     return cleaned || name;
   }
 
-  function isDefaultCheckablePart(node) {
-    if (!isSubmittableNode(node)) return false;
-    if (node.isSuppressed) return false;
-    // TODO: 轻化/封套/BOM 排除等待后端字段；当前仅排除 isSuppressed
-    return true;
+  // ── 设计树筛选栏 ──
+  function renderTreeFilterBar() {
+    var bar = document.getElementById('tree-filter-bar');
+    if (!bar) return;
+    var f = state.treeFilters;
+    var btns = [
+      { key: 'lightweight', label: '轻化', icon: '🪶' },
+      { key: 'hidden',      label: '隐藏', icon: '👁' },
+      { key: 'suppressed',  label: '压缩', icon: '📦' },
+      { key: 'envelope',    label: '封套', icon: '✉️' },
+      { key: 'virtualComp', label: '虚拟', icon: '💻' },
+      { key: 'readOnly',    label: '只读', icon: '🔒' }
+    ];
+    bar.innerHTML = btns.map(function (b) {
+      return '<button class="tree-filter-btn' + (f[b.key] ? ' active' : '') + '" data-filter="' + b.key + '">' +
+        b.icon + ' ' + b.label + '</button>';
+    }).join('');
+    bar.querySelectorAll('.tree-filter-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var key = this.getAttribute('data-filter');
+        if (!key || !(key in state.treeFilters)) return;
+        state.treeFilters[key] = !state.treeFilters[key];
+        refreshDesignTree();
+        renderTreeFilterBar();
+        renderPropertyWorkbench();
+        renderActionBar();
+        renderStatusbar();
+      });
+    });
   }
 
-  // CKP-004-09: 节点分组 key（用于扁平视图勾选联动）
-  // 同 filePath 的节点属于同一组（同零部件多实例）
+  function clearFilteredCheckedIds() {
+    var tree = state.context && state.context.tree;
+    if (!tree) return;
+    var newSet = new Set();
+    state.checkedNodeIds.forEach(function (id) {
+      var node = findNodeById(tree, id);
+      if (node && isSubmittableNode(node)) newSet.add(id);
+    });
+    state.checkedNodeIds = newSet;
+  }
+
+  function filterVisibleChildren(children) {
+    if (!children) return [];
+    return children.filter(function (c) { return isNodeVisible(c); });
+  }
+
+  function isDefaultCheckablePart(node) {
+    // 统一由 isSubmittableNode → isNodePassingFilters 管理所有筛选规则
+    return isSubmittableNode(node);
+  }
+
+  // CKP-005-06: 节点分组 key（扁平/树状勾选联动，禁止 name-only 全局 key）
   function getNodeGroupKey(node) {
-    if (!node) return '';
-    // 1. filePath（最精确，包含完整路径）
-    if (node.filePath && node.filePath.indexOf('|') < 0) return 'fp:' + node.filePath;
-    // 2. 用 cleanNodeName(stripInstance=true) 作为回退 key
-    var cleanFlat = cleanNodeName(node.name || '', true);
-    if (cleanFlat) return 'name:' + cleanFlat;
-    return 'id:' + (node.id || 'unknown');
+    if (!node) return 'unkeyed:unknown';
+
+    var fp = normalizeFilePath(node.filePath);
+    if (fp) return 'fp:' + fp.toLowerCase();
+
+    var docId = node.documentKey || node.documentId || node.fileId || node.modelPath || '';
+    docId = String(docId || '').trim();
+    if (docId && docId.indexOf('|') < 0) return 'doc:' + docId.toLowerCase();
+
+    // 完整 pivotKey（含 config + compName），避免仅末段 compName 导致全局合并
+    var pivot = String(node.pivotKey || node.PivotKey || '').trim();
+    if (pivot) return 'pivot:' + pivot.toLowerCase();
+
+    // 装配树位置路径（C# InstancePath），轻化/虚拟件无 filePath 时仍唯一
+    var inst = String(node.instancePath || node.InstancePath || node.parentPath || '').trim();
+    if (inst) return 'inst:' + inst.toLowerCase();
+
+    return 'unkeyed:' + (node.id || 'unknown');
   }
 
   // CKP-004-09: 查找同组所有节点
@@ -248,25 +576,63 @@
     return result;
   }
 
-  // CKP-004-09: 切换整个节点组的勾选状态
-  function toggleNodeGroupChecked(groupKey, checked) {
+  // CKP-005-06: 切换节点组勾选（仅 submittable；unkeyed 仅影响单节点）
+  function applyNodeGroupChecked(groupKey, checked) {
     var tree = state.context && state.context.tree;
     if (!tree) return;
-    var nodes = findNodesByGroupKey(tree, groupKey);
-    nodes.forEach(function (n) {
+    if (isUnkeyedGroupKey(groupKey)) {
+      var nodeId = groupKey.replace(/^unkeyed:/, '');
+      var single = findNodeById(tree, nodeId);
+      if (single && isSubmittableNode(single)) {
+        if (checked) state.checkedNodeIds.add(single.id);
+        else state.checkedNodeIds.delete(single.id);
+      }
+      return;
+    }
+    findNodesByGroupKey(tree, groupKey).forEach(function (n) {
+      if (!isSubmittableNode(n)) return;
       if (checked) state.checkedNodeIds.add(n.id);
       else state.checkedNodeIds.delete(n.id);
     });
+  }
+
+  function toggleNodeGroupChecked(groupKey, checked) {
+    applyNodeGroupChecked(groupKey, checked);
     refreshCheckedUi();
   }
 
-  // CKP-004-09: 检查节点组是否全选
+  // CKP-004-19 Bug 2: 全选/取消所有零部件
+  function setAllPartsChecked(checked) {
+    var tree = state.context && state.context.tree;
+    if (!tree) return;
+    walkSubtree(tree, function (n) {
+      if (isSubmittableNode(n)) {
+        if (checked) state.checkedNodeIds.add(n.id);
+        else state.checkedNodeIds.delete(n.id);
+      }
+    });
+  }
+
+  // CKP-005-06: 检查组是否全选（仅统计可提交零件）
   function isGroupFullyChecked(groupKey) {
     var tree = state.context && state.context.tree;
     if (!tree) return false;
-    var nodes = findNodesByGroupKey(tree, groupKey);
+    if (isUnkeyedGroupKey(groupKey)) {
+      var nodeId = groupKey.replace(/^unkeyed:/, '');
+      var single = findNodeById(tree, nodeId);
+      return !!(single && isSubmittableNode(single) && state.checkedNodeIds.has(single.id));
+    }
+    var nodes = findNodesByGroupKey(tree, groupKey).filter(function (n) { return isSubmittableNode(n); });
     if (nodes.length === 0) return false;
     return nodes.every(function (n) { return state.checkedNodeIds.has(n.id); });
+  }
+
+  function isGroupPartiallyChecked(groupKey) {
+    if (isGroupFullyChecked(groupKey)) return false;
+    var tree = state.context && state.context.tree;
+    if (!tree) return false;
+    var nodes = findNodesByGroupKey(tree, groupKey).filter(function (n) { return isSubmittableNode(n); });
+    return nodes.some(function (n) { return state.checkedNodeIds.has(n.id); });
   }
 
   function walkSubtree(node, fn) {
@@ -325,9 +691,6 @@
       if (isSubmittableNode(n)) {
         if (checked) state.checkedNodeIds.add(n.id);
         else state.checkedNodeIds.delete(n.id);
-      } else if (isAssemblyNode(n)) {
-        if (checked) state.checkedNodeIds.add(n.id);
-        else state.checkedNodeIds.delete(n.id);
       }
     });
   }
@@ -336,10 +699,10 @@
     if (isAssemblyNode(node) && node.children && node.children.length > 0) {
       setSubtreeChecked(node, checked);
     } else if (isSubmittableNode(node)) {
-      // CKP-004-09: 切换整个节点组（同零部件所有实例联动）
-      var groupKey = getNodeGroupKey(node);
-      toggleNodeGroupChecked(groupKey, checked);
-      return; // toggleNodeGroupChecked already calls refreshCheckedUi
+      applyNodeGroupChecked(getNodeGroupKey(node), checked);
+    } else if (isPartNode(node)) {
+      if (checked) state.checkedNodeIds.add(node.id);
+      else state.checkedNodeIds.delete(node.id);
     }
     refreshCheckedUi();
   }
@@ -371,19 +734,35 @@
   }
 
   function getCheckedComponents() {
+    return getWorkspaceItems().map(function (item) {
+      return buildComponentFromNode(item.node);
+    });
+  }
+
+  // CKP-005-06: 属性工作区唯一数据源（按 group 去重，筛选仅影响可见性）
+  function getWorkspaceItems() {
     var tree = state.context && state.context.tree;
     if (!tree) return [];
-    var components = [];
-    var seen = {};
+    var groups = {};
+    var order = [];
     state.checkedNodeIds.forEach(function (id) {
-      if (seen[id]) return;
       var node = findNodeById(tree, id);
-      if (node && isSubmittableNode(node)) {
-        seen[id] = true;
-        components.push(buildComponentFromNode(node));
+      if (!node || !isSubmittableNode(node)) return;
+      if (!isNodePassingFilters(node)) return;
+      var gk = getNodeGroupKey(node);
+      if (!groups[gk]) {
+        groups[gk] = {
+          groupKey: gk,
+          node: node,
+          instanceCount: 0,
+          nodeIds: []
+        };
+        order.push(gk);
       }
+      groups[gk].instanceCount++;
+      groups[gk].nodeIds.push(id);
     });
-    return components;
+    return order.map(function (gk) { return groups[gk]; });
   }
 
   function extractResultItems(result) {
@@ -402,6 +781,36 @@
     return [];
   }
 
+  function isUsableFilePath(fp) {
+    fp = String(fp || '').trim();
+    return fp && fp !== '不可用' && fp !== 'N/A' && fp.indexOf('|') < 0;
+  }
+
+  function mergeNodeFilePath(node, row) {
+    node = node || {};
+    row = row || {};
+    var rowFp = row.FilePath || row.filePath || '';
+    var nodeFp = node.FilePath || node.filePath || '';
+    if (isUsableFilePath(rowFp)) return rowFp;
+    if (isUsableFilePath(nodeFp)) return nodeFp;
+    return rowFp || nodeFp || '';
+  }
+
+  function applyContextFromResult(data, toastMessage) {
+    if (!data) return false;
+    var raw = data.context_json || data.contextJson || data.context;
+    if (!raw) return false;
+    window.MechPilot.receiveContext(raw);
+    if (toastMessage) showToast(toastMessage);
+    return true;
+  }
+
+  function hasActiveDocumentContext() {
+    if (!state.context || !state.context.tree) return false;
+    var name = state.context.fileName || '';
+    return name && name !== '(none)' && name !== '无激活文档';
+  }
+
   function isCommandSuccess(result) {
     return !!(result && (result.success === true || result.ok === true));
   }
@@ -413,6 +822,131 @@
   function isTerminalJobStatus(status) {
     status = String(status || '').toLowerCase();
     return status === 'completed' || status === 'failed' || status === 'partial_failed' || status === 'cancelled' || status === 'canceled';
+  }
+
+  function isLocalReviewInProgress(job) {
+    if (!job || !job.localReview) return false;
+    var lr = job.localReview;
+    if (lr.pending) return true;
+    return lr.index < (lr.items ? lr.items.length : 0);
+  }
+
+  var localReviewTimeout = null;
+
+  function clearLocalReviewTimeout() {
+    if (localReviewTimeout) {
+      clearTimeout(localReviewTimeout);
+      localReviewTimeout = null;
+    }
+  }
+
+  function armLocalReviewTimeout() {
+    clearLocalReviewTimeout();
+    localReviewTimeout = setTimeout(function () {
+      var job = state.activeJob;
+      var lr = job && job.localReview;
+      if (!lr || !lr.pending) return;
+      var item = lr.pending.item || {};
+      finishLocalReviewItem({
+        file_path: item.file_path,
+        display_name: item.display_name || item.file_name || item.file_path,
+        status: 'failed',
+        stage: lr.pending.step || 'status',
+        error: '本地 PDM 操作超时（45s）'
+      });
+      addAIMessage('system', '本地审核超时：' + (item.display_name || item.file_path || '未知对象'));
+    }, 45000);
+  }
+
+  function findNodeByLooseName(tree, name) {
+    if (!tree || !name) return null;
+    var target = cleanNodeName(name, false).toLowerCase();
+    var base = target.replace(/-\d+$/, '');
+    function walk(n) {
+      var nn = cleanNodeName(n.name || n.displayName || '', false).toLowerCase();
+      if (nn === target || nn === base || (base && nn.indexOf(base) === 0)) return n;
+      if (n.children) {
+        for (var i = 0; i < n.children.length; i++) {
+          var found = walk(n.children[i]);
+          if (found) return found;
+        }
+      }
+      return null;
+    }
+    return walk(tree);
+  }
+
+  function resolveAgentItemFilePath(item) {
+    item = item || {};
+    var fp = normalizeFilePath(item.file_path || item.filePath || item.path || '');
+    if (isUsableFilePath(fp)) return fp;
+
+    var labels = [
+      item.display_name, item.displayName,
+      item.file_name, item.fileName,
+      item.name, item.component, item.component_id
+    ].map(function (s) { return cleanNodeName(s || '', false); }).filter(Boolean);
+
+    var tree = state.context && state.context.tree;
+    if (tree) {
+      for (var i = 0; i < labels.length; i++) {
+        var node = findNodeByDisplayName(tree, labels[i]) || findNodeByLooseName(tree, labels[i]);
+        if (node) {
+          fp = normalizeFilePath(node.filePath || '');
+          if (isUsableFilePath(fp)) return fp;
+        }
+      }
+    }
+
+    var table = state.context && (state.context.propertyTable || state.context.PropertyTable);
+    var rows = table && (table.rows || table.Rows) || [];
+    for (var r = 0; r < rows.length; r++) {
+      var row = rows[r];
+      var rowName = cleanNodeName(
+        row.DisplayName || row.displayName || row.LocalComponentName || row.localComponentName || '',
+        false
+      );
+      for (var j = 0; j < labels.length; j++) {
+        if (!labels[j]) continue;
+        if (rowName === labels[j] || rowName.indexOf(labels[j]) >= 0 || labels[j].indexOf(rowName) >= 0) {
+          fp = normalizeFilePath(row.FilePath || row.filePath || '');
+          if (isUsableFilePath(fp)) return fp;
+        }
+      }
+    }
+    return '';
+  }
+
+  function findLocalReviewJob(requestId) {
+    if (!requestId) return null;
+    if (state.activeJob && state.activeJob.localReview && state.activeJob.localReview.pending &&
+        state.activeJob.localReview.pending.requestId === requestId) {
+      return { job: state.activeJob, isActive: true };
+    }
+    for (var i = 0; i < state.submittedJobs.length; i++) {
+      var job = state.submittedJobs[i];
+      if (job.localReview && job.localReview.pending && job.localReview.pending.requestId === requestId) {
+        return { job: job, isActive: false, index: i };
+      }
+    }
+    return null;
+  }
+
+  function finalizeLocalReviewJob(job) {
+    if (!job) return;
+    clearLocalReviewTimeout();
+    job.status = 'completed';
+    job.current_stage = 'local_done';
+    job.progress_percent = 100;
+    if (!job.completed_at) job.completed_at = new Date().toISOString();
+    job.message = 'Local review complete: ' + ((job.localReview && job.localReview.results) ? job.localReview.results.length : 0) + ' item(s)';
+    job.localReview = null;
+    if (state.activeJob && state.activeJob.job_id === job.job_id) state.activeJob = job;
+    upsertSubmittedJob(job);
+    syncDraftTimestampsFromActiveJob();
+    refreshTaskList();
+    renderJobStatusPanel();
+    renderStatusbar();
   }
 
   function normalizeJobData(data, fallback) {
@@ -438,8 +972,328 @@
       results: data.results || fallback.results || null,
       source: data.source || fallback.source || '',
       chat_message: data.chat_message || fallback.chat_message || '',
-      output: data.output || fallback.output || ''
+      output: data.output || fallback.output || '',
+      submitted_at: fallback.submitted_at || data.submitted_at || data.submittedAt || data.created_at || data.createdAt || null,
+      started_at: fallback.started_at || data.started_at || data.startedAt || data.start_time || data.startTime || null,
+      completed_at: fallback.completed_at || data.completed_at || data.completedAt || data.finished_at || data.finishedAt || null,
+      payload: fallback.payload || data.payload || null,
+      request_id: fallback.request_id || data.request_id || data.requestId || null
     };
+  }
+
+
+
+  // DEMO-005-01 hotfix: parse structured MechPilot Agent outputs from Hermes poll wrappers.
+  function canonicalizeAgentOutput(raw) {
+    if (!raw) return null;
+    if (typeof raw === 'string') {
+      try { return canonicalizeAgentOutput(JSON.parse(raw)); } catch (e) { return null; }
+    }
+    if (Array.isArray(raw)) {
+      for (var i = 0; i < raw.length; i++) {
+        var fromArray = canonicalizeAgentOutput(raw[i]);
+        if (fromArray) return fromArray;
+      }
+      return null;
+    }
+    if (typeof raw !== 'object') return null;
+    if (raw.execution_mode || raw.executionMode || raw.items || raw.components || raw.pdm_batch_write_properties) {
+      return applyAgentFieldAliases(raw);
+    }
+    var wrappers = [raw.results, raw.output, raw.result, raw.data, raw.message];
+    for (var w = 0; w < wrappers.length; w++) {
+      var parsed = canonicalizeAgentOutput(wrappers[w]);
+      if (parsed) return parsed;
+    }
+    return null;
+  }
+
+  function applyAgentFieldAliases(raw) {
+    var output = raw || {};
+    var items = output.items || output.components || [];
+    if (!Array.isArray(items)) items = [];
+    items = items.map(function (item) {
+      item = item || {};
+      var props = item.properties || item.current_properties || item.currentProperties || {};
+      var expected = item.expected_properties || item.expectedProperties || item.target_properties || item.targetProperties || {};
+      return Object.assign({}, item, {
+        file_path: item.file_path || item.filePath || item.path || '',
+        file_name: item.file_name || item.fileName || item.name || '',
+        configuration: item.configuration || item.config || item.config_name || '',
+        properties: props,
+        expected_properties: expected,
+        decision: item.decision || item.action || item.status || ''
+      });
+    });
+    var executionMode = output.execution_mode || output.executionMode;
+    if (!executionMode && items.length >= 10) executionMode = 'mcp';
+    if (!executionMode && items.length > 0) executionMode = 'local';
+    return Object.assign({}, output, {
+      execution_mode: executionMode,
+      task_id: output.task_id || output.taskId || output.id || '',
+      instance_count: output.instance_count != null ? output.instance_count : (output.instanceCount != null ? output.instanceCount : items.length),
+      items: items,
+      summary: output.summary || null
+    });
+  }
+
+  function handleStructuredAgentCompletion(data, jobOverride) {
+    data = enrichPollDataFromRaw(data || {});
+    var pollJobId = (data && (data.job_id || data.jobId || data.id)) || '';
+    var job = jobOverride || (pollJobId ? getJobById(pollJobId) : null) || state.activeJob;
+    if (!job) return false;
+
+    var raw = data.results || data.structured_result || data.output || data.result || data.data || data.message;
+    var agent = canonicalizeAgentOutput(raw);
+    if (!agent || !agent.execution_mode) return false;
+
+    job.agentResult = agent;
+    job.executionMode = agent.execution_mode;
+    job.reviewItems = agent.items || [];
+    job.instanceCount = agent.instance_count || (agent.items ? agent.items.length : 0);
+    job.total_items = job.instanceCount;
+    if (agent.summary) job.summary = agent.summary;
+    if (agent.pdm_batch_write_properties) job.mcpRequest = agent.pdm_batch_write_properties;
+
+    var summary = agent.summary || {};
+    var counts = [];
+    ['total', 'pass', 'fix', 'skip', 'fail'].forEach(function (key) {
+      if (summary[key] != null) counts.push(key + '=' + summary[key]);
+    });
+    var countText = counts.length ? ' (' + counts.join(', ') + ')' : '';
+    var isCurrentActive = state.activeJob && job.job_id && state.activeJob.job_id === job.job_id;
+
+    if (agent.execution_mode === 'local') {
+      job.hermesStatus = job.status || 'completed';
+      job.status = 'local_running';
+      job.completed_at = null;
+      job.current_stage = 'local_pending';
+      job.message = 'Agent local plan received: ' + job.reviewItems.length + ' item(s)' + countText;
+      addAIMessage('system', job.message);
+      if (isCurrentActive && typeof executeLocalMaterialReview === 'function') {
+        state.activeJob = job;
+        executeLocalMaterialReview(agent.items || []);
+      } else if (!isCurrentActive) {
+        addAIMessage('system', 'Local plan stored for job ' + (job.job_id || '') + ' (not the current active submit).');
+      } else {
+        addAIMessage('system', 'Local structured result received; local write executor is not loaded in this UI build. Check task details for expected_properties.');
+      }
+    } else if (agent.execution_mode === 'mcp') {
+      job.current_stage = 'mcp_ready';
+      job.message = 'Agent MCP batch plan received: ' + job.reviewItems.length + ' item(s)' + countText + '. Dry-run only before authorization.';
+      addAIMessage('system', job.message);
+    } else {
+      job.message = 'Structured Agent result received: execution_mode=' + agent.execution_mode;
+      addAIMessage('system', job.message);
+    }
+
+    if (isCurrentActive) state.activeJob = job;
+    upsertSubmittedJob(job);
+    refreshTaskList();
+    renderJobStatusPanel();
+    renderStatusbar();
+    return true;
+  }
+
+  function applyFieldAliases(raw) {
+    return applyAgentFieldAliases(raw);
+  }
+
+  function localStageLabel(stage) {
+    var labels = {
+      local_pending: '等待本地执行',
+      local_setup: 'PDM 状态检查',
+      local_checkout: 'PDM 检出',
+      local_writing: '写入属性',
+      local_saving: '保存确认',
+      local_checkin: 'PDM 检入',
+      local_done: '本地完成',
+      local_skipped: '已跳过',
+      local_running: '本地执行中',
+      mcp_ready: 'MCP 批量就绪'
+    };
+    return labels[stage] || stage || '-';
+  }
+
+  function updateLocalReviewProgress(stage, message) {
+    state.activeJob.current_stage = stage;
+    state.activeJob.message = message || localStageLabel(stage);
+    var lr = state.activeJob.localReview;
+    if (lr && lr.items && lr.items.length) {
+      state.activeJob.progress_percent = Math.min(99, Math.round((lr.index / lr.items.length) * 100));
+    }
+    refreshTaskList();
+    renderJobStatusPanel();
+    renderStatusbar();
+  }
+
+  function finishLocalReviewItem(record) {
+    var lr = state.activeJob && state.activeJob.localReview;
+    if (!lr) return;
+    lr.results.push(record || {});
+    lr.index += 1;
+    lr.pending = null;
+    clearLocalReviewTimeout();
+    setTimeout(processLocalReviewItem, 0);
+  }
+
+  function processLocalReviewItem() {
+    var lr = state.activeJob && state.activeJob.localReview;
+    if (!lr || lr.index >= lr.items.length) {
+      finalizeLocalReviewJob(state.activeJob);
+      return;
+    }
+    var item = lr.items[lr.index];
+    item.file_path = resolveAgentItemFilePath(item);
+    var name = item.display_name || item.file_name || item.file_path || ('item-' + lr.index);
+    var decision = String(item.decision || 'skip').toLowerCase();
+    if (decision === 'pass' || decision === 'skip' || decision === 'fail') {
+      finishLocalReviewItem({
+        file_path: item.file_path,
+        display_name: name,
+        decision: decision,
+        status: 'skipped',
+        reason: item.reason || decision
+      });
+      return;
+    }
+    if (!isUsableFilePath(item.file_path)) {
+      finishLocalReviewItem({
+        file_path: item.file_path,
+        display_name: name,
+        decision: decision,
+        status: 'blocked',
+        error: '无法解析文件路径：' + name
+      });
+      return;
+    }
+    updateLocalReviewProgress('local_setup', localStageLabel('local_setup') + ': ' + name);
+    var rid = window.MechPilot.sendCommand('local.pdm.status', { file_path: item.file_path });
+    lr.pending = { requestId: rid, step: 'status', item: item };
+    armLocalReviewTimeout();
+  }
+
+  function executeLocalMaterialReview(items) {
+    items = items || [];
+    if (!items.length) return;
+    var dryRun = true;
+    if (state.activeJob && state.activeJob.payload) {
+      var sc = state.activeJob.payload.session_context || state.activeJob.payload;
+      if (sc && sc.dry_run === false) dryRun = false;
+    }
+    state.activeJob.localReview = {
+      items: items,
+      index: 0,
+      dryRun: dryRun,
+      results: [],
+      pending: null
+    };
+    processLocalReviewItem();
+  }
+
+  function handleLocalReviewResult(result) {
+    var target = findLocalReviewJob(result.request_id);
+    if (!target) {
+      if (state.activeJob && state.activeJob.localReview && state.activeJob.localReview.pending) return false;
+      return false;
+    }
+    var job = target.job;
+    if (target.isActive) state.activeJob = job;
+    else state.submittedJobs[target.index] = job;
+
+    var lr = job.localReview;
+    if (!lr || !lr.pending) return false;
+    if (result.request_id && lr.pending.requestId && result.request_id !== lr.pending.requestId) return false;
+
+    clearLocalReviewTimeout();
+
+    var item = lr.pending.item;
+    var step = lr.pending.step;
+    var data = getResultData(result);
+    var pdm = data.data || data;
+    var name = item.display_name || item.file_path;
+
+    if (step === 'status') {
+      var st = String(pdm.status || 'error');
+      if (st === 'not_in_vault' || st === 'checked_out_by_other' || st === 'error') {
+        finishLocalReviewItem({
+          file_path: item.file_path,
+          display_name: name,
+          decision: item.decision,
+          status: 'blocked',
+          pdm_status: st,
+          error: pdm.error || st
+        });
+        return true;
+      }
+      if (lr.dryRun) {
+        finishLocalReviewItem({
+          file_path: item.file_path,
+          display_name: name,
+          decision: item.decision,
+          status: 'dry_run_would_write',
+          pdm_status: st,
+          expected_properties: item.expected_properties || {}
+        });
+        return true;
+      }
+      updateLocalReviewProgress('local_checkout', localStageLabel('local_checkout') + ': ' + name);
+      var ridCo = window.MechPilot.sendCommand('local.pdm.checkout', {
+        file_path: item.file_path,
+        comment: 'MechPilot property review'
+      });
+      lr.pending = { requestId: ridCo, step: 'checkout', item: item, pdm_status: st };
+      armLocalReviewTimeout();
+      return true;
+    }
+    if (step === 'checkout') {
+      if (!isCommandSuccess(result) || pdm.success === false) {
+        finishLocalReviewItem({
+          file_path: item.file_path,
+          display_name: name,
+          status: 'failed',
+          stage: 'checkout',
+          error: pdm.error || 'checkout failed'
+        });
+        return true;
+      }
+      updateLocalReviewProgress('local_writing', localStageLabel('local_writing') + ': ' + name);
+      var ridWr = window.MechPilot.sendCommand('local.material_review.write_properties', { items: [item] });
+      lr.pending = { requestId: ridWr, step: 'writing', item: item };
+      armLocalReviewTimeout();
+      return true;
+    }
+    if (step === 'writing') {
+      if (!isCommandSuccess(result)) {
+        finishLocalReviewItem({
+          file_path: item.file_path,
+          display_name: name,
+          status: 'failed',
+          stage: 'writing',
+          error: (result.error && result.error.message) || 'write failed'
+        });
+        return true;
+      }
+      updateLocalReviewProgress('local_checkin', localStageLabel('local_checkin') + ': ' + name);
+      var ridCi = window.MechPilot.sendCommand('local.pdm.checkin', {
+        file_path: item.file_path,
+        comment: 'MechPilot property review'
+      });
+      lr.pending = { requestId: ridCi, step: 'checkin', item: item };
+      armLocalReviewTimeout();
+      return true;
+    }
+    if (step === 'checkin') {
+      finishLocalReviewItem({
+        file_path: item.file_path,
+        display_name: name,
+        status: isCommandSuccess(result) ? 'completed' : 'failed',
+        stage: 'checkin',
+        error: pdm.error || ''
+      });
+      return true;
+    }
+    return false;
   }
 
   function formatSeconds(seconds) {
@@ -493,8 +1347,10 @@
   // ══════════════════════════════════════════════════════════
   var LS_SNAPSHOTS = 'mechpilot.workspace.snapshots.v1';
   var LS_TASK_DRAFTS = 'mechpilot.workspace.taskDrafts.v1';
+  var LS_SUBMITTED_JOBS = 'mechpilot.workspace.submittedJobs.v1';
   var LS_CURRENT_TASK = 'mechpilot.workspace.currentTaskId.v1';
   var MAX_SNAPSHOTS = 30;
+  var MAX_SUBMITTED_JOBS = 100;
 
   function saveToLS(key, data) {
     try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { /* quota exceeded */ }
@@ -505,15 +1361,210 @@
 
   function persistSnapshots() { saveToLS(LS_SNAPSHOTS, state.snapshots); }
   function persistTaskDrafts() { saveToLS(LS_TASK_DRAFTS, state.taskDrafts); }
+  function persistSubmittedJobs() { saveToLS(LS_SUBMITTED_JOBS, state.submittedJobs); }
   function persistCurrentTask() { saveToLS(LS_CURRENT_TASK, state.currentTaskId); }
 
+  function cloneJobRecord(job) {
+    if (!job) return null;
+    try { return JSON.parse(JSON.stringify(job)); } catch (e) { return null; }
+  }
+
+  function validateSubmittedJob(j) {
+    if (!j || typeof j !== 'object') return false;
+    var id = j.job_id || j.taskId;
+    return typeof id === 'string' && id.length > 0 && id.length <= 200;
+  }
+
+  function findSubmittedJobIndex(jobId) {
+    if (!jobId) return -1;
+    for (var i = 0; i < state.submittedJobs.length; i++) {
+      if (state.submittedJobs[i].job_id === jobId) return i;
+    }
+    return -1;
+  }
+
+  function getJobById(jobId) {
+    if (!jobId) return null;
+    if (state.activeJob && state.activeJob.job_id === jobId) return state.activeJob;
+    var idx = findSubmittedJobIndex(jobId);
+    return idx >= 0 ? state.submittedJobs[idx] : null;
+  }
+
+  function upsertSubmittedJob(job) {
+    if (!job) return;
+    var rec = cloneJobRecord(job);
+    if (!rec) return;
+    if (!rec.taskId) rec.taskId = rec.job_id || ('job-' + Date.now());
+    if (!rec.job_id) rec.job_id = rec.taskId;
+    var idx = findSubmittedJobIndex(rec.job_id);
+    if (idx >= 0) state.submittedJobs[idx] = rec;
+    else state.submittedJobs.unshift(rec);
+    if (state.submittedJobs.length > MAX_SUBMITTED_JOBS) {
+      state.submittedJobs.length = MAX_SUBMITTED_JOBS;
+    }
+    persistSubmittedJobs();
+  }
+
+  function archiveActiveJob() {
+    if (!state.activeJob || !state.activeJob.job_id) return;
+    upsertSubmittedJob(state.activeJob);
+  }
+
+  function syncActiveJobToHistory() {
+    if (state.activeJob && state.activeJob.job_id) upsertSubmittedJob(state.activeJob);
+  }
+
+  function getTaskQueueSortTime(entry) {
+    if (!entry) return 0;
+    var t = entry.sortTime;
+    if (t) {
+      var preset = parseDateValue(t);
+      if (preset) return preset.getTime();
+    }
+    var times = entry.times || {};
+    var raw = times.submitted_at || times.created_at || times.completed_at || times.started_at;
+    if (!raw && entry.draft) raw = entry.draft.submittedAt || entry.draft.createdAt;
+    var d = parseDateValue(raw);
+    return d ? d.getTime() : 0;
+  }
+
+  function sortTaskQueueEntries(entries) {
+    entries.sort(function (a, b) { return getTaskQueueSortTime(b) - getTaskQueueSortTime(a); });
+    return entries;
+  }
+
+  function getTaskQueueCount() {
+    var seen = {};
+    var count = state.taskDrafts.length;
+    state.submittedJobs.forEach(function (j) {
+      var id = j.job_id || j.taskId;
+      if (id) seen[id] = true;
+    });
+    count += state.submittedJobs.length;
+    if (state.activeJob) {
+      var ajId = state.activeJob.job_id || state.activeJob._pendingId;
+      if (ajId && !seen[ajId]) count += 1;
+      else if (!ajId) count += 1;
+    }
+    return count;
+  }
+
+  function jobRecordToQueueEntry(job, opts) {
+    opts = opts || {};
+    var typeLabel = job.source || job.type || job.taskType || '任务';
+    return {
+      isDraft: false,
+      isActiveJob: !!opts.isActiveJob,
+      taskId: job.job_id || job.taskId || job._pendingId || ('job-' + Date.now()),
+      title: typeLabel,
+      taskType: job.source || job.type || '',
+      typeLabel: typeLabel,
+      typeIcon: opts.isActiveJob
+        ? (job.status === 'running' ? '⚡' : (job.status === 'completed' ? '✅' : '⏳'))
+        : '📤',
+      objCount: getActiveJobItemCount(job),
+      status: job.status || 'unknown',
+      queuePos: '',
+      submittedJobId: job.job_id || '',
+      progress: job.progress_percent,
+      completedItems: job.completed_items,
+      totalItems: getActiveJobItemCount(job),
+      currentStage: job.current_stage || '',
+      jobMessage: job.message || '',
+      results: job.results || null,
+      reviewItems: job.reviewItems,
+      summary: job.summary,
+      executionMode: job.executionMode,
+      sortTime: job.submitted_at || job.created_at || job.completed_at,
+      times: {
+        created_at: job.created_at,
+        submitted_at: job.submitted_at,
+        started_at: job.started_at,
+        completed_at: job.completed_at
+      },
+      draft: null
+    };
+  }
+
+  function getJobsNeedingPoll() {
+    var seen = {};
+    var out = [];
+    function add(job) {
+      if (!job || !job.job_id || isTerminalJobStatus(job.status)) return;
+      if (job.status === 'local_running' || isLocalReviewInProgress(job)) return;
+      if (seen[job.job_id]) return;
+      seen[job.job_id] = true;
+      out.push(job);
+    }
+    add(state.activeJob);
+    state.submittedJobs.forEach(add);
+    return out;
+  }
+
+  function restartJobPollingAll() {
+    clearJobPollTimer();
+    if (!window.MechPilot || typeof window.MechPilot.sendCommand !== 'function') return;
+    var jobs = getJobsNeedingPoll();
+    if (!jobs.length) return;
+    jobs.forEach(function (j) {
+      window.MechPilot.sendCommand('agent.job.poll', { job_id: j.job_id });
+    });
+    jobPollTimer = setInterval(function () {
+      var pending = getJobsNeedingPoll();
+      if (!pending.length) {
+        clearJobPollTimer();
+        return;
+      }
+      pending.forEach(function (j) {
+        window.MechPilot.sendCommand('agent.job.poll', { job_id: j.job_id });
+      });
+    }, 3000);
+  }
+
+  function resolvePollTargetJob(data) {
+    data = data || {};
+    var jobId = data.job_id || data.jobId || data.id || '';
+    if (state.activeJob) {
+      if (!jobId) return { ref: state.activeJob, isActive: true };
+      if (state.activeJob.job_id === jobId) return { ref: state.activeJob, isActive: true };
+      if (!state.activeJob.job_id && state.activeJob.status === 'submitting') return { ref: state.activeJob, isActive: true };
+    }
+    var idx = findSubmittedJobIndex(jobId);
+    if (idx >= 0) return { ref: state.submittedJobs[idx], isActive: false, index: idx };
+    return null;
+  }
+
   function loadPersistedState() {
+    // CKP-004-23 P0-1.2: schema 白名单校验，拒绝畸形/注入数据
     var snaps = loadFromLS(LS_SNAPSHOTS);
-    if (Array.isArray(snaps)) state.snapshots = snaps;
+    if (Array.isArray(snaps)) state.snapshots = snaps.filter(validateSnapshot);
     var drafts = loadFromLS(LS_TASK_DRAFTS);
-    if (Array.isArray(drafts)) state.taskDrafts = drafts;
+    if (Array.isArray(drafts)) state.taskDrafts = drafts.filter(validateTaskDraft);
+    var jobs = loadFromLS(LS_SUBMITTED_JOBS);
+    if (Array.isArray(jobs)) state.submittedJobs = jobs.filter(validateSubmittedJob);
     var curTask = loadFromLS(LS_CURRENT_TASK);
-    if (curTask) state.currentTaskId = curTask;
+    if (typeof curTask === 'string' && curTask.length > 0 && curTask.length <= 200) state.currentTaskId = curTask;
+  }
+
+  // CKP-004-23 P0-1.2: snapshot 模式校验
+  function validateSnapshot(s) {
+    if (!s || typeof s !== 'object') return false;
+    if (typeof s.snapshotId !== 'string' || s.snapshotId.length > 200) return false;
+    if (typeof s.createdAt !== 'string' || s.createdAt.length > 50) return false;
+    if (s.reason && (typeof s.reason !== 'string' || s.reason.length > 200)) return false;
+    // designTree 可为 null/object（不做内容排查），防止超大对象
+    return true;
+  }
+
+  // CKP-004-23 P0-1.2: taskDraft 模式校验
+  function validateTaskDraft(d) {
+    if (!d || typeof d !== 'object') return false;
+    if (typeof d.taskId !== 'string' || d.taskId.length > 200) return false;
+    if (typeof d.taskType !== 'string' || d.taskType.length > 50) return false;
+    if (!Array.isArray(d.selectedObjectIds)) return false;
+    if (!Array.isArray(d.selectedObjectNames)) return false;
+    if (typeof d.title !== 'string' || d.title.length > 500) return false;
+    return true;
   }
 
   // ══════════════════════════════════════════════════════════
@@ -522,7 +1573,7 @@
   function createSnapshot(reason) {
     var ctx = state.context || {};
     var snap = {
-      snapshotId: 'snap-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6),
+      snapshotId: 'snap-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
       createdAt: new Date().toISOString(),
       reason: reason || 'manual',
       activeDocument: {
@@ -538,7 +1589,7 @@
         checkedNodeIds: Array.from(state.checkedNodeIds)
       },
       taskDrafts: JSON.parse(JSON.stringify(state.taskDrafts)),
-      taskList: JSON.parse(JSON.stringify(state.tasks.slice(-20))),
+      taskList: JSON.parse(JSON.stringify(state.submittedJobs.slice(0, 20))),
       aiThreads: state.aiThreads.slice(-10).map(function (t) { return { id: t.id, taskId: t.taskId, messages: t.messages.slice(-5) }; })
     };
     state.snapshots.push(snap);
@@ -558,12 +1609,12 @@
       var taskCount = snap.taskDrafts ? snap.taskDrafts.length : 0;
       var selCount = snap.selectionSummary ? snap.selectionSummary.checkedCount : 0;
       var time = snap.createdAt ? formatTime(snap.createdAt) : '';
-      html += '<div class="snapshot-item" data-snapshot-id="' + snap.snapshotId + '">' +
+      html += '<div class="snapshot-item" data-snapshot-id="' + esc(snap.snapshotId) + '">' +
         '<div class="snapshot-info">' +
           '<span class="snapshot-doc">' + esc(docName) + '</span>' +
           '<span class="snapshot-meta">' + time + ' · ' + taskCount + '任务 · ' + selCount + '选中</span>' +
         '</div>' +
-        '<button class="snapshot-restore-btn" data-snapshot-id="' + snap.snapshotId + '">恢复</button>' +
+        '<button class="snapshot-restore-btn" data-snapshot-id="' + esc(snap.snapshotId) + '">恢复</button>' +
       '</div>';
     });
     html += '</div>';
@@ -603,7 +1654,8 @@
     }
     // Restore tasks
     if (snap.taskList) {
-      state.tasks = snap.taskList;
+      state.submittedJobs = snap.taskList;
+      persistSubmittedJobs();
     }
 
     // Navigate to workspace
@@ -635,7 +1687,7 @@
     var snap = createSnapshot('task_draft');
 
     var draft = {
-      taskId: 'task-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6),
+      taskId: 'task-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
       taskType: taskType,
       title: typeInfo.icon + ' ' + typeInfo.label + ' — ' + (checkedNames.length > 0 ? checkedNames.slice(0, 3).join(', ') + (checkedNames.length > 3 ? ' 等' + checkedNames.length + '项' : '') : '当前文档'),
       status: 'draft',
@@ -704,32 +1756,29 @@
   }
 
   function startJobPolling(jobId) {
-    clearJobPollTimer();
-    if (!jobId) return;
-    jobPollTimer = setInterval(function () {
-      if (!state.activeJob || state.activeJob.job_id !== jobId || isTerminalJobStatus(state.activeJob.status)) {
-        clearJobPollTimer();
-        return;
-      }
-      window.MechPilot.sendCommand('agent.job.poll', { job_id: jobId });
-    }, 3000);
+    restartJobPollingAll();
   }
 
   function submitJob(command, payload, sourceLabel) {
+    archiveActiveJob();
     clearJobPollTimer();
     state.activeJob = {
       job_id: '',
+      _pendingId: 'pending-' + Date.now(),
       accepted: false,
       status: 'submitting',
       progress_percent: 0,
       current_stage: '提交中',
       source: sourceLabel || command,
-      submitted_at: new Date(),
+      submitted_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
       request_id: null,
       payload: payload
     };
     renderJobStatusPanel();
     renderStatusbar();
+    refreshTaskList();
 
     try {
       state.activeJob.request_id = window.MechPilot.sendCommand(command, payload);
@@ -738,8 +1787,12 @@
       state.activeJob.status = 'failed';
       state.activeJob.current_stage = '提交失败';
       state.activeJob.message = '无法发送任务请求，请检查 WebView2 / Hermes 连接。';
+      if (!state.activeJob.completed_at) state.activeJob.completed_at = new Date().toISOString();
+      syncDraftTimestampsFromActiveJob();
+      syncActiveJobToHistory();
       renderJobStatusPanel();
       renderStatusbar();
+      refreshTaskList();
       addAIMessage('system', state.activeJob.message);
     }
   }
@@ -762,9 +1815,13 @@
       state.activeJob.status = 'failed';
       state.activeJob.current_stage = '受理失败';
       state.activeJob.message = formatHermesFailureMessage(result);
+      if (!state.activeJob.completed_at) state.activeJob.completed_at = new Date().toISOString();
+      syncDraftTimestampsFromActiveJob();
+      syncActiveJobToHistory();
       clearJobPollTimer();
       renderJobStatusPanel();
       renderStatusbar();
+      refreshTaskList();
       addAIMessage('system', state.activeJob.message);
       // CKP-004-10: 自动更新 Hermes 状态
       if (/401|403|Unauthorized|未授权/i.test(state.activeJob.message)) updateHermesStatus('auth_required', state.activeJob.message);
@@ -774,13 +1831,18 @@
     }
 
     state.activeJob = normalizeJobData(data, state.activeJob);
+    syncJobTimestamps(state.activeJob, data);
     state.activeJob.accepted = true;
     state.activeJob.status = state.activeJob.status || 'queued';
     state.activeJob.current_stage = state.activeJob.current_stage || '排队中';
+    if (state.activeJob._pendingId) delete state.activeJob._pendingId;
+    syncDraftTimestampsFromActiveJob();
+    syncActiveJobToHistory();
     renderJobStatusPanel();
     renderStatusbar();
+    refreshTaskList();
     addAIMessage('system', '任务已受理，Job ID：' + state.activeJob.job_id);
-    startJobPolling(state.activeJob.job_id);
+    restartJobPollingAll();
     // CKP-004-10: 成功提交 → 自动更新为 online
     updateHermesStatus('online', '任务提交成功，Job ID: ' + state.activeJob.job_id);
   }
@@ -820,6 +1882,10 @@
     state.activeJob.accepted = true;
     state.activeJob.current_stage = '已完成';
     state.activeJob.progress_percent = 100;
+    if (!state.activeJob.completed_at) state.activeJob.completed_at = new Date().toISOString();
+    syncDraftTimestampsFromActiveJob();
+    syncActiveJobToHistory();
+    refreshTaskList();
     renderJobStatusPanel();
     renderStatusbar();
     var chatReply = '';
@@ -831,29 +1897,76 @@
     addAIMessage('ai', chatReply);
   }
 
+  function enrichPollDataFromRaw(data) {
+    data = data || {};
+    if (data.output || data.results || data.structured_result) return data;
+    var raw = data.raw;
+    if (!raw) return data;
+    try {
+      var parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.output && !data.output) data.output = parsed.output;
+        if (parsed.results && !data.results) data.results = parsed.results;
+        if (parsed.structured_result && !data.structured_result) data.structured_result = parsed.structured_result;
+        if (parsed.status && (!data.status || data.status === 'unknown')) data.status = parsed.status;
+        if (parsed.error && !data.message) data.message = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
+        if (parsed.started_at && !data.started_at) data.started_at = parsed.started_at;
+        if (parsed.completed_at && !data.completed_at) data.completed_at = parsed.completed_at;
+        if (parsed.submitted_at && !data.submitted_at) data.submitted_at = parsed.submitted_at;
+        if (parsed.created_at && !data.created_at) data.created_at = parsed.created_at;
+      }
+    } catch (e) { /* ignore malformed raw */ }
+    return data;
+  }
+
   function handleJobPollResult(result) {
-    var data = getResultData(result);
+    var data = enrichPollDataFromRaw(getResultData(result));
     if (!isCommandSuccess(result)) {
-      if (!state.activeJob) state.activeJob = {};
-      state.activeJob.status = 'failed';
-      state.activeJob.current_stage = '轮询失败';
-      state.activeJob.message = (result && result.message) || (result && result.error && result.error.message) || '获取任务状态失败，请检查 Hermes 服务。';
-      clearJobPollTimer();
+      var failTarget = resolvePollTargetJob(data);
+      if (!failTarget) {
+        if (!state.activeJob) state.activeJob = {};
+        failTarget = { ref: state.activeJob, isActive: true };
+      }
+      failTarget.ref.status = 'failed';
+      failTarget.ref.current_stage = '轮询失败';
+      failTarget.ref.message = (result && result.message) || (result && result.error && result.error.message) || '获取任务状态失败，请检查 Hermes 服务。';
+      if (!failTarget.ref.completed_at) failTarget.ref.completed_at = new Date().toISOString();
+      if (failTarget.isActive) state.activeJob = failTarget.ref;
+      else state.submittedJobs[failTarget.index] = failTarget.ref;
+      syncDraftTimestampsFromActiveJob();
+      syncActiveJobToHistory();
+      restartJobPollingAll();
       renderJobStatusPanel();
       renderStatusbar();
-      addAIMessage('system', state.activeJob.message);
+      refreshTaskList();
+      addAIMessage('system', failTarget.ref.message);
       return;
     }
 
-    state.activeJob = normalizeJobData(data, state.activeJob);
-    if (data.results) state.activeJob.results = data.results;
+    var target = resolvePollTargetJob(data);
+    if (!target) return;
+    var merged = normalizeJobData(data, target.ref);
+    syncJobTimestamps(merged, data);
+    if (data.results) merged.results = data.results;
+    if (target.isActive) state.activeJob = merged;
+    else state.submittedJobs[target.index] = merged;
+    if (state.activeJob && merged.job_id && state.activeJob.job_id === merged.job_id) {
+      state.activeJob = merged;
+    }
+    syncDraftTimestampsFromActiveJob();
+    syncActiveJobToHistory();
     renderJobStatusPanel();
     renderStatusbar();
-    if (isTerminalJobStatus(state.activeJob.status)) {
-      clearJobPollTimer();
+    refreshTaskList();
+    if (isTerminalJobStatus(merged.status)) {
+      if (handleStructuredAgentCompletion(data, merged)) {
+        restartJobPollingAll();
+        return;
+      }
+
       // For normal AI chat, show result as AI bubble
-      if (state.activeJob.source === 'ai.assistant.chat') {
-        if (state.activeJob.status === 'completed' || state.activeJob.status === 'partial_failed') {
+      if (merged.source === 'ai.assistant.chat') {
+        if (merged.status === 'completed' || merged.status === 'partial_failed') {
           var chatReply = '';
           if (data.content) {
             chatReply = data.content;
@@ -866,23 +1979,24 @@
           } else if (data.message) {
             chatReply = data.message;
           }
-          if (state.activeJob.results && Array.isArray(state.activeJob.results) && state.activeJob.results.length > 0) {
-            var first = state.activeJob.results[0];
+          if (merged.results && Array.isArray(merged.results) && merged.results.length > 0) {
+            var first = merged.results[0];
             if (first.content) chatReply = first.content;
             else if (first.output) chatReply = first.output;
             else if (first.result) chatReply = typeof first.result === 'string' ? first.result : JSON.stringify(first.result);
           }
-          if (!chatReply) chatReply = 'Agent 处理完成（无文本返回），状态：' + statusLabel(state.activeJob.status);
+          if (!chatReply) chatReply = 'Agent 处理完成（无文本返回），状态：' + statusLabel(merged.status);
           addAIMessage('ai', chatReply);
         } else {
-          addAIMessage('system', '对话处理' + statusLabel(state.activeJob.status) + '：' + (state.activeJob.message || ''));
+          addAIMessage('system', '对话处理' + statusLabel(merged.status) + '：' + (merged.message || ''));
         }
       } else {
-        var summary = '任务完成：' + statusLabel(state.activeJob.status);
-        if (state.activeJob.completed_items != null) summary += '，成功 ' + state.activeJob.completed_items;
-        if (state.activeJob.failed_items != null && state.activeJob.failed_items > 0) summary += '，失败 ' + state.activeJob.failed_items;
+        var summary = '任务完成：' + statusLabel(merged.status);
+        if (merged.completed_items != null) summary += '，成功 ' + merged.completed_items;
+        if (merged.failed_items != null && merged.failed_items > 0) summary += '，失败 ' + merged.failed_items;
         addAIMessage('system', summary);
       }
+      restartJobPollingAll();
     }
   }
 
@@ -892,6 +2006,7 @@
       accepted: '已受理',
       queued: '排队中',
       running: '运行中',
+      local_running: '本地执行中',
       completed: '已完成',
       failed: '失败',
       partial_failed: '部分失败',
@@ -951,6 +2066,10 @@
           '<div><span>预计等待</span><b>' + esc(formatSeconds(job.estimated_wait_seconds)) + '</b></div>' +
           '<div><span>当前阶段</span><b>' + esc(job.current_stage || '-') + '</b></div>' +
           (submittedCount > 0 ? '<div><span>已提交组件</span><b>' + submittedCount + ' 个</b></div>' : '') +
+          '<div><span>提交时间</span><b>' + esc(formatDateTime(job.submitted_at)) + '</b></div>' +
+          '<div><span>开始时间</span><b>' + esc(formatDateTime(job.started_at)) + '</b></div>' +
+          '<div><span>完成时间</span><b>' + esc(formatDateTime(job.completed_at)) + '</b></div>' +
+          '<div><span>总耗时</span><b>' + esc(getTaskDurationText(job, job.status)) + '</b></div>' +
         '</div>' +
         '<div class="job-progress">' +
           '<div class="progress-wrap">' +
@@ -989,10 +2108,59 @@
     state.settings.ragScoreThreshold = Number(pick(hindsight, 'ScoreThreshold', 'scoreThreshold', 'score_threshold', state.settings.ragScoreThreshold));
     if (isNaN(state.settings.ragScoreThreshold)) state.settings.ragScoreThreshold = 0.35;
     state.ragOnline = !!pick(hindsight, 'Enabled', 'enabled', 'enabled', state.ragOnline);
-    // CKP-004-10: 如果 base_url 可用但未检测过或仍是 unknown，可激活手动检测提示
-    if (state.hermesStatus.status === 'unknown' && state.settings.hermesUrl) {
-      // 不自动健康检查，留给用户手动触发；但标记为 ready_to_check
+    // CKP-004-19 Bug 7: 从 config 读取自定义属性列映射
+    applyPropertyColumnMapping(runtimeConfig);
+    syncPropertyColumnsFromReadPropertyNames(runtimeConfig);
+  }
+
+  // CKP-004-19 Bug 7: 可配置的自定义属性列映射
+  var _propColumnMappingLoaded = false;
+  function applyPropertyColumnMapping(runtimeConfig) {
+    if (_propColumnMappingLoaded) return;
+    var mapping = runtimeConfig && runtimeConfig.property_column_mapping;
+    if (!Array.isArray(mapping) || mapping.length === 0) return;
+    // 重建 PROP_COLUMNS: 固有列 + 用户映射列
+    var intrinsic = [
+      { key: 'fileName', label: '文件名称', intrinsic: true },
+      { key: 'docType', label: '文件类型', intrinsic: true },
+      { key: 'instanceCount', label: '实例数', intrinsic: true },
+      { key: 'filePath', label: '文件路径', intrinsic: true },
+      { key: 'fileSize', label: '文件大小', intrinsic: true }
+    ];
+    var mapped = [];
+    mapping.forEach(function (item) {
+      if (item.label && item.property) {
+        mapped.push({ key: item.property, label: item.label });
+        // 同步更新 PROP_ALIASES 使 resolvePropValue 能直接匹配 property 名
+        if (!PROP_ALIASES[item.property]) {
+          PROP_ALIASES[item.property] = [item.property];
+        }
+      }
+    });
+    if (mapped.length > 0) {
+      PROP_COLUMNS = intrinsic.concat(mapped);
+      _propColumnMappingLoaded = true;
     }
+  }
+
+  function syncPropertyColumnsFromReadPropertyNames(runtimeConfig) {
+    if (_propColumnMappingLoaded) return;
+    var names = [];
+    var cfg = runtimeConfig && (runtimeConfig.read_property_names || runtimeConfig.ReadPropertyNames);
+    if (Array.isArray(cfg) && cfg.length > 0) names = cfg;
+    else names = DEFAULT_KEY_PROPERTIES;
+    var intrinsic = [
+      { key: 'fileName', label: '文件名称', intrinsic: true },
+      { key: 'docType', label: '文件类型', intrinsic: true },
+      { key: 'instanceCount', label: '实例数', intrinsic: true },
+      { key: 'filePath', label: '文件路径', intrinsic: true },
+      { key: 'fileSize', label: '文件大小', intrinsic: true }
+    ];
+    var mapped = names.map(function (n) {
+      if (!PROP_ALIASES[n]) PROP_ALIASES[n] = [n];
+      return { key: n, label: n };
+    });
+    PROP_COLUMNS = intrinsic.concat(mapped);
   }
 
   // CKP-004-10: Hermes 状态辅助函数
@@ -1039,38 +2207,73 @@
       if (pivot) rowByPivot[pivot] = row;
     });
 
-    function mapProps(properties) {
-      var mapped = {};
-      properties = properties || {};
-      Object.keys(properties).forEach(function (key) {
-        var value = properties[key] || {};
-        mapped[key] = {
-          raw: value.RawValue != null ? value.RawValue : (value.rawValue != null ? value.rawValue : value.raw),
-          resolved: value.ResolvedValue != null ? value.ResolvedValue : (value.resolvedValue != null ? value.resolvedValue : value.resolved)
-        };
-      });
-      return mapped;
+    // CKP-004-19: 备用索引 — 多实例同一 filePath 的 PivotKey 可能不匹配（ReadAssemblyAllComponents 按 filePath 分组取首实例名）
+    var rowByFilePath = {};
+    sourceRows.forEach(function (row) {
+      var fp = row.FilePath || row.filePath || '';
+      if (fp && !rowByFilePath[fp]) rowByFilePath[fp] = row;
+    });
+
+    // CKP-005-08: 按组件名+配置回退（树 PivotKey 含「不可用」时与属性行 PivotKey 不一致）
+    var rowByCompKey = {};
+    sourceRows.forEach(function (row) {
+      var comp = (row.LocalComponentName || row.localComponentName || row.TargetName || row.targetName || '').trim();
+      var cfg = (row.Configuration || row.configuration || row.ConfigurationName || row.configurationName || '(默认)').trim();
+      if (!comp) return;
+      var key = comp.toLowerCase() + '|' + cfg.toLowerCase();
+      if (!rowByCompKey[key]) rowByCompKey[key] = row;
+    });
+
+    function lookupPropertyRow(node, pivot) {
+      var row = rowByPivot[pivot];
+      if (row && (row.Properties || row.properties || isUsableFilePath(row.FilePath || row.filePath))) return row;
+      var nodeFp = node.FilePath || node.filePath || '';
+      if (isUsableFilePath(nodeFp) && rowByFilePath[nodeFp]) return rowByFilePath[nodeFp];
+      var comp = (node.ComponentName || node.componentName || node.DisplayName || node.displayName || node.Name || node.name || '').trim();
+      var cfg = (node.Configuration || node.configuration || '(默认)').trim();
+      if (comp) {
+        var ck = comp.toLowerCase() + '|' + cfg.toLowerCase();
+        if (rowByCompKey[ck]) return rowByCompKey[ck];
+        var ckDefault = comp.toLowerCase() + '|(默认)';
+        if (rowByCompKey[ckDefault]) return rowByCompKey[ckDefault];
+      }
+      return row || {};
     }
 
     function mapNode(node) {
       var pivot = node.PivotKey || node.pivotKey || node.NodeId || node.nodeId;
-      var row = rowByPivot[pivot] || {};
+      var row = lookupPropertyRow(node, pivot);
       var nodeId = node.NodeId || node.nodeId || pivot || row.RowKey || row.rowKey || row.DisplayName || row.displayName;
-      // CKP-004-18: 用 getCleanDisplayName 代替旧拼接逻辑，禁止路径/PivotKey 作为 UI name
-      var cleanName = getCleanDisplayName(node, row);
+      var displayName = getCleanDisplayName(node, row);
+      var treeName = cleanNodeName(displayName, false);
+      var mappedType = normalizeTreeDocType(node, row);
+      var mergedFp = mergeNodeFilePath(node, row);
       return {
         id: nodeId,
-        name: cleanName,
-        type: node.IsAssembly || node.isAssembly ? 'assembly' : (node.DocType || node.docType || row.DocType || row.docType || 'part'),
-        docType: node.DocType || node.docType || row.DocType || row.docType || '',
+        name: treeName,
+        displayName: displayName,
+        type: mappedType,
+        docType: node.DocType || node.docType || row.DocType || row.docType || mappedType,
         quantity: node.Quantity || node.quantity || row.Quantity || row.quantity || 1,
-        filePath: node.FilePath || node.filePath || row.FilePath || row.filePath || '',
+        filePath: mergedFp,
         fileSize: row.FileSize || row.fileSize || node.FileSize || node.fileSize || '',
+        pivotKey: node.PivotKey || node.pivotKey || row.PivotKey || row.pivotKey || pivot || '',
+        instancePath: node.InstancePath || node.instancePath || row.InstancePath || row.instancePath || '',
+        componentName: node.ComponentName || node.componentName || row.LocalComponentName || row.localComponentName || '',
+        configuration: node.Configuration || node.configuration || row.Configuration || row.configuration || row.ConfigurationName || row.configurationName || '',
+        documentKey: row.DocumentKey || row.documentKey || node.DocumentKey || node.documentKey || '',
+        isPart: mappedType === 'part',
+        isAssembly: mappedType === 'assembly',
         isSuppressed: node.IsSuppressed || node.isSuppressed || false,
         isLightweight: node.IsLightweight || node.isLightweight || false,
+        isHidden: node.IsHidden || node.isHidden || false,
+        isEnvelope: node.IsEnvelope || node.isEnvelope || false,
+        isVirtual: node.IsVirtual || node.isVirtual || false,
+        isReadOnly: node.IsReadOnly || node.isReadOnly || false,
+        isInPdmVault: node.IsInPdmVault || node.isInPdmVault || row.IsInPdmVault || row.isInPdmVault || false,
         depth: node.Depth || node.depth || 0,
         childrenCount: node.ChildrenCount || node.childrenCount || 0,
-        properties: mapProps(row.Properties || row.properties),
+        properties: mapRowProperties(row),
         children: (node.Children || node.children || []).map(mapNode)
       };
     }
@@ -1081,15 +2284,28 @@
         var id = row.PivotKey || row.pivotKey || row.RowKey || row.rowKey || ('row-' + index);
         // CKP-004-18: 禁止 PivotKey/filePath 作为 UI name
         var cleanName = getCleanDisplayName({}, row);
+        var rowType = normalizeTreeDocType({}, row);
         return {
           id: id,
           name: cleanName,
-          type: row.DocType || row.docType || 'part',
-          docType: row.DocType || row.docType || '',
+          displayName: cleanName,
+          type: rowType,
+          docType: row.DocType || row.docType || rowType,
           quantity: row.Quantity || row.quantity || 1,
           filePath: row.FilePath || row.filePath || '',
           fileSize: row.FileSize || row.fileSize || '',
-          properties: mapProps(row.Properties || row.properties),
+          pivotKey: row.PivotKey || row.pivotKey || id,
+          documentKey: row.DocumentKey || row.documentKey || '',
+          isPart: rowType === 'part',
+          isAssembly: rowType === 'assembly',
+          isSuppressed: row.IsSuppressed || row.isSuppressed || false,
+          isLightweight: row.IsLightweight || row.isLightweight || false,
+          isHidden: row.IsHidden || row.isHidden || false,
+          isEnvelope: row.IsEnvelope || row.isEnvelope || false,
+          isVirtual: row.IsVirtual || row.isVirtual || false,
+          isReadOnly: row.IsReadOnly || row.isReadOnly || false,
+          isInPdmVault: row.IsInPdmVault || row.isInPdmVault || false,
+          properties: mapRowProperties(row),
           children: []
         };
       });
@@ -1129,6 +2345,11 @@
       } : null,
       _warnings: warnings,
       _runtimeConfig: runtimeConfig,
+      _propertyIndex: {
+        byPivot: rowByPivot,
+        byFilePath: rowByFilePath,
+        byCompKey: rowByCompKey
+      },
       _isMock: false
     };
   }
@@ -1138,6 +2359,7 @@
   // ══════════════════════════════════════════════════════════
   function init() {
     loadPersistedState();  // Restore snapshots, task drafts, current task from localStorage
+    restartJobPollingAll();
     state.context = normalizeContext(window.MECHPILOT_MOCK_CONTEXT) || null;
     if (state.context) {
       state.settings.executionMode = state.context.mode || 'local';
@@ -1164,9 +2386,40 @@
   // ══════════════════════════════════════════════════════════
   //  WebView2 Bridge
   // ══════════════════════════════════════════════════════════
+  // WebView2 Bridge: C# Base64 为 UTF-8 字节，atob  alone 会破坏中文
+  function decodeBase64Utf8Json(b64) {
+    if (!b64) return null;
+    var binary = atob(b64);
+    var len = binary.length;
+    var bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    if (typeof TextDecoder !== 'undefined') {
+      return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+    }
+    var pct = '';
+    for (var j = 0; j < len; j++) pct += '%' + ('00' + bytes[j].toString(16)).slice(-2);
+    return JSON.parse(decodeURIComponent(pct));
+  }
+
+  function parseIncomingContext(context) {
+    if (context == null) return null;
+    if (typeof context === 'string') {
+      try { return JSON.parse(context); } catch (e1) {
+        try { return decodeBase64Utf8Json(context); } catch (e2) {
+          console.error('[MechPilot] Invalid context payload:', e2);
+          return null;
+        }
+      }
+    }
+    return context;
+  }
+
   function injectBridge() {
     window.MechPilot = {
+      decodeBase64Utf8Json: decodeBase64Utf8Json,
       receiveContext: function (context) {
+        context = parseIncomingContext(context);
+        if (!context) return;
         // CKP-004-07: 保存旧选中节点标识以便刷新后恢复
         var oldSelectedId = state.selectedNode ? state.selectedNode.id : null;
         var oldSelectedName = state.selectedNode ? state.selectedNode.name : null;
@@ -1196,6 +2449,7 @@
             }
           });
           state.checkedNodeIds = newCheckedIds;
+          if (state.checkedNodeIds.size === 0) initDefaultCheckedNodeIds();
           state.expandedSet.clear();
           state.expandedSet.add(state.context.tree.id);
           if (state.context.tree.children) {
@@ -1213,6 +2467,8 @@
 
         var cmd = result.command || result.action || result.type;
         var data = getResultData(result);
+        if (!cmd && data.command) cmd = data.command;
+        if (handleLocalReviewResult(result)) return;
         if (cmd === 'ai.material.search') {
           renderMaterialResults(result);
           var count = extractResultItems(result).length;
@@ -1226,31 +2482,27 @@
           }
         } else if (cmd === 'material.properties.review.submit' || cmd === 'agent.job.submit' || (!cmd && state.activeJob && state.activeJob.status === 'submitting' && (data.job_id || data.jobId || data.id))) {
           handleJobSubmitResult(result);
-        } else if (cmd === 'agent.job.poll' || (!cmd && state.activeJob && state.activeJob.job_id && (data.job_id === state.activeJob.job_id || data.jobId === state.activeJob.job_id))) {
+        } else if (cmd === 'agent.job.poll') {
           handleJobPollResult(result);
-        } else if (cmd === 'refresh_context' || (!cmd && data && data.context && result.success)) {
-          // Apply refreshed context from C# (cmd may be undefined — MakeCockpitResult has no 'command' field)
-          if (data && data.context) {
-            window.MechPilot.receiveContext(data.context);
-            var fileName = data.context.fileName || (data.context.ActiveDocument && data.context.ActiveDocument.Title) || '';
+        } else if (!cmd && data && (data.job_id || data.jobId) && getJobById(data.job_id || data.jobId)) {
+          handleJobPollResult(result);
+        } else if (cmd === 'local.read_properties') {
+          if (applyContextFromResult(data, null)) {
+            var readName = state.context && state.context.fileName ? state.context.fileName : '';
+            showToast('属性读取完成：' + readName + '，已刷新属性表');
+          } else if (isCommandSuccess(result)) {
+            showToast('属性读取完成');
+          } else {
+            showToast('属性读取失败：' + (result.message || (result.error && result.error.message) || ''));
+          }
+        } else if (cmd === 'refresh_context' || (!cmd && data && (data.context_json || data.contextJson || data.context) && isCommandSuccess(result))) {
+          if (applyContextFromResult(data, null)) {
+            var fileName = (state.context && state.context.fileName) || '';
             showToast('上下文已刷新：' + fileName + '（历史选择已保存在快照中）');
-          } else if (result.ok) {
+          } else if (isCommandSuccess(result)) {
             showToast('上下文刷新完成');
           } else {
             showToast('上下文刷新失败：' + (result.message || ''));
-          }
-        } else if (cmd === 'local.read_properties') {
-          // Fallback: local.read_properties and refresh_context both return { data: { context } },
-          // so the (!cmd && data.context) branch above already handles both. This case only
-          // fires when the result somehow carries the command name (rare single-path).
-          if (data && data.context) {
-            window.MechPilot.receiveContext(data.context);
-            var propFileName = data.context.fileName || (data.context.ActiveDocument && data.context.ActiveDocument.Title) || '';
-            showToast('属性读取完成：' + propFileName + '，已刷新属性表');
-          } else if (result.ok) {
-            showToast('属性读取完成');
-          } else {
-            showToast('属性读取失败：' + (result.message || ''));
           }
         } else if (!cmd && data && data.pinned !== undefined) {
           // CKP-004-08: window_pin_toggle result
@@ -1295,7 +2547,7 @@
         }
       },
       sendCommand: function (type, payload) {
-        var requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+        var requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2, 12);
         var envelope = JSON.stringify({
           command: type,
           type: type,
@@ -1306,7 +2558,7 @@
         if (window.chrome && window.chrome.webview) {
           window.chrome.webview.postMessage(envelope);
         } else {
-          console.log('[MechPilot] sendCommand (mock):', type, payload);
+          // Mock 环境下（非 WebView2）仅在开发工具打开时日志输出
           // Mock 环境下直接返回物料检索结果
           if (type === 'ai.assistant.chat') {
             setTimeout(function () {
@@ -1389,6 +2641,10 @@
         return requestId;
       }
     };
+    // CKP-004-23: Object.freeze 防止 bridge 被篡改
+    if (typeof Object.freeze === 'function') {
+      try { Object.freeze(window.MechPilot); } catch (_) { /* readonly 模式忽略 */ }
+    }
   }
 
   // ══════════════════════════════════════════════════════════
@@ -1401,7 +2657,6 @@
       '<div class="topbar-brand"><span class="logo-box">MP</span> MechPilot Agent驾驶舱</div>' +
       '<div class="topbar-divider"></div>' +
       '<div class="topbar-info">' +
-        '<span><span class="label">文件：</span><span class="value" id="tb-file">' + esc(c ? c.fileName : '(无)') + '</span></span>' +
         '<span><span class="label">路径：</span><span class="value" id="tb-path" title="' + esc(c ? c.filePath : '') + '">' + esc(c ? c.filePath : '') + '</span></span>' +
       '</div>' +
       '<div class="topbar-right">' +
@@ -1409,8 +2664,6 @@
         '<button class="topbar-pin-btn' + (state.windowPinned ? ' pinned' : '') + '" id="topbar-pin-btn" title="' + (state.windowPinned ? '已钉住 — 点击取消' : '钉住 — 窗口保持前台') + '">' +
           (state.windowPinned ? '📌 已钉住' : '📌 钉住') +
         '</button>' +
-        '<span class="badge badge-mode" id="tb-mode">' + esc(c ? c.mode : 'local') + '</span>' +
-        '<span class="badge badge-status" id="tb-status">' + esc(c ? c.status : '演示数据') + '</span>' +
       '</div>';
     ensureWindowControls();
   }
@@ -1509,6 +2762,23 @@
         if (page) navigatePage(page);
       });
     });
+    // CKP-004-19: 侧边栏折叠/展开（默认折叠）
+    var toggle = document.getElementById('sidebar-toggle');
+    var sidebar = document.getElementById('sidebar');
+    if (toggle) {
+      // 启动时应用默认折叠状态
+      if (state.sidebarCollapsed) {
+        sidebar.classList.add('collapsed');
+        toggle.innerHTML = '▶';
+        toggle.setAttribute('title', '展开导航');
+      }
+      toggle.addEventListener('click', function () {
+        state.sidebarCollapsed = !state.sidebarCollapsed;
+        sidebar.classList.toggle('collapsed', state.sidebarCollapsed);
+        toggle.innerHTML = state.sidebarCollapsed ? '▶' : '◀';
+        toggle.setAttribute('title', state.sidebarCollapsed ? '展开导航' : '收起导航');
+      });
+    }
   }
 
   function navigatePage(pageId) {
@@ -1524,7 +2794,13 @@
     container.classList.toggle('page-dashboard-active', pageId === 'dashboard');
     container.classList.toggle('page-workspace-active', pageId === 'workspace');
     container.innerHTML = '';
-    PAGES[pageId].render(container);
+    // CKP-004-23 P1-3.3: 错误边界保护渲染不中断整个 App
+    try {
+      PAGES[pageId].render(container);
+    } catch (e) {
+      console.error('[MechPilot] Page render error:', pageId, e);
+      container.innerHTML = '<div class="error-message">页面渲染失败: ' + esc(String(e.message || e)) + '</div>';
+    }
   }
 
   // ══════════════════════════════════════════════════════════
@@ -1547,6 +2823,13 @@
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSendAI(); }
     });
+
+    // CKP-004-22: 初始同步折叠状态
+    if (!state.aiPanelOpen) {
+      panel.classList.add('collapsed');
+      toggle.innerHTML = '&#x25C0;';
+      toggle.setAttribute('title', '展开');
+    }
 
     if (state.aiMessages.length === 0) {
       addAIMessage('ai', '你好，我是 MechPilot AI 助手。当前页面：' + PAGES[DEFAULT_PAGE].title + '。有什么可以帮你的？');
@@ -1618,7 +2901,9 @@
       current_stage: '提交中',
       source: 'ai.assistant.chat',
       chat_message: text,
-      submitted_at: new Date(),
+      submitted_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
       request_id: null,
       payload: payload
     };
@@ -1648,19 +2933,8 @@
       return;
     }
 
-    // Mode toggle toolbar
-    var toolbar = document.createElement('div');
-    toolbar.className = 'tree-mode-toolbar';
-    toolbar.innerHTML =
-      '<button class="tree-mode-btn' + (state.settings.treeViewMode === 'tree' ? ' active' : '') + '" data-mode="tree" title="树状结构">🌲 树状</button>' +
-      '<button class="tree-mode-btn' + (state.settings.treeViewMode === 'flat' ? ' active' : '') + '" data-mode="flat" title="扁平汇总">📋 扁平</button>';
-    toolbar.querySelectorAll('.tree-mode-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        state.settings.treeViewMode = this.getAttribute('data-mode');
-        refreshDesignTree();
-      });
-    });
-    container.appendChild(toolbar);
+    // 筛选栏
+    renderTreeFilterBar();
 
     var el = document.createElement('div');
     el.className = 'design-tree';
@@ -1681,8 +2955,8 @@
     flattenTree(tree, allNodes, 0);
 
     // Group by type
-    var parts = allNodes.filter(function (n) { return n.type === 'part'; });
-    var assemblies = allNodes.filter(function (n) { return n.type === 'assembly'; });
+    var parts = allNodes.filter(function (n) { return isPartNode(n); });
+    var assemblies = allNodes.filter(function (n) { return isAssemblyNode(n); });
 
     // ── CKP-004-15: Header row (名称 + 实例数) at top ──
     var header = document.createElement('div');
@@ -1709,7 +2983,32 @@
 
       var title = document.createElement('div');
       title.className = 'flat-section-title';
-      title.textContent = groupLabel + ' (' + Object.keys(docMap).length + ')';
+
+      // 分区全选 checkbox（替代原来的两个按钮）
+      var groupCheckAllNodes = nodeList;
+      var allGroupKeys = new Set();
+      groupCheckAllNodes.forEach(function (n) { allGroupKeys.add(getNodeGroupKey(n)); });
+      var allGroupsChecked = true;
+      allGroupKeys.forEach(function (gk) { if (!isGroupFullyChecked(gk)) allGroupsChecked = false; });
+
+      var selCb = document.createElement('input');
+      selCb.type = 'checkbox';
+      selCb.className = 'flat-checkbox';
+      selCb.checked = allGroupsChecked;
+      selCb.addEventListener('click', function (e) { e.stopPropagation(); });
+      selCb.addEventListener('change', function (e) {
+        e.stopPropagation();
+        var checked = selCb.checked;
+        var groups = new Set();
+        groupCheckAllNodes.forEach(function (n) { groups.add(getNodeGroupKey(n)); });
+        groups.forEach(function (gk) { applyNodeGroupChecked(gk, checked); });
+        refreshCheckedUi();
+      });
+
+      title.innerHTML =
+        '<span class="flat-col-check"></span>' +
+        groupLabel + ' (' + Object.keys(docMap).length + ')';
+      title.querySelector('.flat-col-check').appendChild(selCb);
       section.appendChild(title);
 
       var table = document.createElement('div');
@@ -1726,8 +3025,7 @@
         var n = entry.node;
         var groupKey = entry.groupKey;
         var allChecked = isGroupFullyChecked(groupKey);
-        var someChecked = entry.ids.some(function (id) { return state.checkedNodeIds.has(id); });
-        var indeterminate = !allChecked && someChecked;
+        var indeterminate = isGroupPartiallyChecked(groupKey);
 
         var row = document.createElement('div');
         row.className = 'flat-row';
@@ -1754,7 +3052,10 @@
 
         row.innerHTML =
           '<span class="flat-col-check"></span>' +
-          '<span class="flat-col-name" title="' + esc(displayName) + '">' + esc(displayName) + badges + '</span>' +
+          '<span class="flat-col-name" title="' + esc(displayName) + '">' +
+            '<span class="' + getNodeIconClass(n) + '">' + getNodeIconHtml(n) + '</span>' +
+            '<span class="flat-col-name-text">' + esc(displayName) + badges + '</span>' +
+          '</span>' +
           '<span class="flat-col-qty">' + entry.count + '</span>';
         row.querySelector('.flat-col-check').appendChild(cb);
 
@@ -1793,6 +3094,7 @@
 
   function flattenTree(node, result, depth) {
     if (!node) return;
+    if (node.id !== 'root' && !isNodeVisible(node)) return;
     node.depth = depth;
     if (node.id !== 'root') result.push(node);  // skip synthetic root
     if (node.children) {
@@ -1807,7 +3109,13 @@
     div.className = 'tree-node';
     div.setAttribute('data-id', node.id);
 
-    var hasChildren = !isPartNode(node) && node.children && node.children.length > 0;
+    // 非根节点：应用筛选器可见性检查
+    if (node.id !== 'root' && !isNodeVisible(node)) {
+      div.style.display = 'none';
+      return div;
+    }
+
+    var hasChildren = isAssemblyNode(node) && node.children && node.children.length > 0;
     var isExpanded = state.expandedSet.has(node.id);
     var isSelected = state.selectedNode && state.selectedNode.id === node.id;
 
@@ -1824,6 +3132,10 @@
       var asmState = getAssemblyCheckState(node);
       checkbox.checked = asmState.checked;
       checkbox.indeterminate = asmState.indeterminate;
+    } else if (isSubmittableNode(node)) {
+      var partGroupKey = getNodeGroupKey(node);
+      checkbox.checked = isGroupFullyChecked(partGroupKey);
+      checkbox.indeterminate = isGroupPartiallyChecked(partGroupKey);
     } else {
       checkbox.checked = state.checkedNodeIds.has(node.id);
     }
@@ -1851,17 +3163,17 @@
     }
     row.appendChild(toggle);
 
-    // 图标
+    // 图标（本地默认色，PDM 文件用 tree-icon-pdm）
     var icon = document.createElement('span');
-    icon.className = 'tree-icon';
-    icon.innerHTML = node.type === 'assembly' ? ICONS.assembly : ICONS.part;
+    icon.className = getNodeIconClass(node);
+    icon.innerHTML = getNodeIconHtml(node);
     row.appendChild(icon);
 
     // 名称
     var name = document.createElement('span');
     name.className = 'tree-name';
     // CKP-004-15: 去掉文件扩展名 (.SLDPRT 等)
-    name.textContent = cleanNodeName(node.name, false);
+    name.textContent = cleanNodeName(node.displayName || node.name || '', false);
     row.appendChild(name);
 
     // 数量
@@ -1891,7 +3203,14 @@
       state.selectedNode = node;
       // Toggle checkbox state (checkbox and expand arrow have stopPropagation, so we only get here for name/icon/qty clicks)
       if (!e.target.closest('.tree-toggle') && !e.target.closest('.tree-checkbox')) {
-        var newChecked = !state.checkedNodeIds.has(node.id);
+        var newChecked;
+        if (isAssemblyNode(node) && hasChildren) {
+          newChecked = !getAssemblyCheckState(node).checked;
+        } else if (isSubmittableNode(node)) {
+          newChecked = !isGroupFullyChecked(getNodeGroupKey(node));
+        } else {
+          newChecked = !state.checkedNodeIds.has(node.id);
+        }
         handleNodeCheckToggle(node, newChecked);
       }
       refreshDesignTree();
@@ -1906,7 +3225,7 @@
     if (hasChildren && isExpanded) {
       var children = document.createElement('div');
       children.className = 'tree-children';
-      node.children.forEach(function (child) {
+      filterVisibleChildren(node.children).forEach(function (child) {
         children.appendChild(buildTreeNode(child, depth + 1));
       });
       div.appendChild(children);
@@ -1934,7 +3253,7 @@
     var treeNodes = ctx.tree ? countNodes(ctx.tree) - 1 : 0;
 
     // Mock task statistics (placeholder for real data)
-    var mockStats = state.tasks.length > 0 ? computeTaskStats(state.tasks) : {
+    var mockStats = state.submittedJobs.length > 0 ? computeTaskStats(state.submittedJobs) : {
       total: 12, completed: 9, failed: 1, running: 2,
       successRate: '75%', avgDuration: '4.2s'
     };
@@ -2045,8 +3364,13 @@
     }
   }
 
+  function getAllSubmittedJobsForDisplay() {
+    return state.submittedJobs.slice();
+  }
+
   function renderRecentTasksHtml() {
-    if (state.tasks.length === 0) {
+    var jobs = getAllSubmittedJobsForDisplay();
+    if (jobs.length === 0) {
       return '<div class="recent-placeholder">' +
         '<div class="recent-row"><span class="recent-status ok">✓</span> 属性审核 · 211015932_HRA1标准托盘 <span class="recent-time">14:26</span></div>' +
         '<div class="recent-row"><span class="recent-status ok">✓</span> AI 对话 · "123" <span class="recent-time">14:26</span></div>' +
@@ -2054,12 +3378,11 @@
       '</div>';
     }
     var html = '';
-    var recent = state.tasks.slice(-5).reverse();
-    recent.forEach(function (t) {
+    jobs.slice(0, 5).forEach(function (t) {
       var stCls = t.status === 'completed' ? 'ok' : (t.status === 'failed' ? 'err' : 'warn');
       html += '<div class="recent-row"><span class="recent-status ' + stCls + '">' +
         (stCls === 'ok' ? '✓' : stCls === 'err' ? '✗' : '…') +
-        '</span> ' + esc(t.type || t.source || 'task') + ' <span class="recent-time">' +
+        '</span> ' + esc(t.source || t.type || 'task') + ' <span class="recent-time">' +
         (t.submitted_at ? formatTime(t.submitted_at) : '') + '</span></div>';
     });
     return html;
@@ -2088,27 +3411,35 @@
 
     container.innerHTML =
       '<div class="workspace-page">' +
-        '<div class="page-title">任务编排 <span class="page-subtitle">' + esc(ctx.fileName || '无激活文档') + '</span></div>' +
-
-        // Context bar
-        '<div class="ws-context-bar">' +
-          '<span class="ws-ctx-item">📄 ' + esc(ctx.fileName || '-') + '</span>' +
-          '<span class="ws-ctx-item">类型: ' + esc(ctx.tree ? ctx.tree.docType || 'assembly' : '-') + '</span>' +
-          '<span class="ws-ctx-item">节点: ' + total + '</span>' +
-          '<label class="ws-ctx-auto-refresh" title="SW 切换文档时自动刷新上下文">' +
-            '<input type="checkbox" id="auto-refresh-toggle"' + (state.settings.autoRefreshContext ? ' checked' : '') + '> 自动刷新' +
-          '</label>' +
-          '<button class="ws-ctx-refresh" id="manual-refresh-btn" title="手动刷新上下文">🔄 刷新</button>' +
+        '<div class="page-title ws-title-bar">' +
+          '任务编排 <span class="page-subtitle">' + esc(ctx.fileName || '无激活文档') + '</span>' +
+          '<span class="ws-title-info">' +
+            '类型: ' + esc(ctx.tree ? ctx.tree.docType || 'assembly' : '-') +
+            ' · 节点: ' + total +
+          '</span>' +
+          '<span class="ws-title-actions">' +
+            '<label class="ws-ctx-auto-refresh" title="SW 切换文档时自动刷新上下文">' +
+              '<input type="checkbox" id="auto-refresh-toggle"' + (state.settings.autoRefreshContext ? ' checked' : '') + '> 自动刷新' +
+            '</label>' +
+            '<button class="ws-ctx-refresh" id="manual-refresh-btn" title="手动刷新上下文">🔄 刷新</button>' +
+          '</span>' +
         '</div>' +
 
         '<div class="ws-body">' +
           '<div class="ws-layout">' +
             // Left: Design tree
             '<div class="ws-left">' +
-              '<div class="panel-header">设计树 <button class="tree-refresh-btn" id="tree-refresh-btn" title="刷新设计树">↻</button></div>' +
+              '<div class="panel-header tree-panel-header">' +
+                '<span class="tree-title">设计树</span>' +
+                '<span class="tree-mode-btns">' +
+                  '<button class="tree-mode-btn' + (state.settings.treeViewMode === 'tree' ? ' active' : '') + '" data-mode="tree" title="树状结构">🌲 树状</button>' +
+                  '<button class="tree-mode-btn' + (state.settings.treeViewMode === 'flat' ? ' active' : '') + '" data-mode="flat" title="扁平汇总">📋 扁平</button>' +
+                '</span>' +
+              '</div>' +
+              '<div class="tree-filter-bar" id="tree-filter-bar"></div>' +
               '<div class="design-tree-container" id="design-tree-container"></div>' +
             '</div>' +
-
+            '<div class="ws-resizer" id="ws-resizer"></div>' +
             // Center: Action bar + property workbench + merged task queue
             '<div class="ws-center">' +
               // CKP-004-13: Action bar moved above property workbench (within ws-center)
@@ -2116,7 +3447,8 @@
               '<div class="panel-header">选中零部件属性工作区 <span class="task-count" id="prop-table-count">' + getCheckedPartCount() + ' 个零件</span></div>' +
               '<div class="prop-workbench" id="prop-workbench"></div>' +
               '<div class="task-queue-panel" id="task-queue-panel">' +
-                '<div class="panel-header tq-panel-header">任务队列 <span class="task-count" id="tq-total-count">' + (state.taskDrafts.length + state.tasks.length) + '</span><span class="tq-filter-bar" id="tq-filter-bar"></span></div>' +
+                '<div class="panel-header tq-panel-header">任务队列 <span class="task-count" id="tq-total-count">' + getTaskQueueCount() + '</span><span class="tq-filter-bar" id="tq-filter-bar"></span>' +
+                  '<button class="tq-collapse-btn" id="tq-collapse-btn" title="折叠">▲</button></div>' +
                 '<div class="task-queue-container" id="task-list-container">' + renderTaskQueueHtml() + '</div>' +
               '</div>' +
             '</div>' +
@@ -2150,19 +3482,17 @@
         });
       });
     }
-    var treeRefreshEl = document.getElementById('tree-refresh-btn');
-    if (treeRefreshEl) {
-      treeRefreshEl.addEventListener('click', function () {
-        // CKP-004-07: 设计树刷新也向 C# 请求最新上下文
-        var snap = createSnapshot('before_tree_refresh');
-        var oldSel = state.selectedNode;
-        showToast('已保存快照（节点：' + (oldSel ? oldSel.name : '无') + '），正在刷新设计树…');
-        window.MechPilot.sendCommand('refresh_context', {
-          oldNodeId: oldSel ? oldSel.id : null,
-          oldNodeName: oldSel ? oldSel.name : null
+    // 标题栏中树状/扁平模式按钮绑定——切换后同步 active 状态
+    document.querySelectorAll('.tree-mode-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        state.settings.treeViewMode = this.getAttribute('data-mode');
+        // 刷新按钮 active 状态
+        document.querySelectorAll('.tree-mode-btn').forEach(function (b) {
+          b.classList.toggle('active', b.getAttribute('data-mode') === state.settings.treeViewMode);
         });
+        refreshDesignTree();
       });
-    }
+    });
 
     // Render summary + actions
     renderPropertyWorkbench();
@@ -2170,6 +3500,53 @@
     renderTaskQueueFilters();
     refreshTaskList();
     updateAIHeader();
+
+    // CKP-004-22 P3: 设计树宽度拖拽调整
+    var resizer = document.getElementById('ws-resizer');
+    var wsLayout = document.querySelector('.ws-layout');
+    if (resizer && wsLayout) {
+      var isResizing = false;
+      var startX, startLeftWidth;
+
+      resizer.addEventListener('mousedown', function (e) {
+        isResizing = true;
+        startX = e.clientX;
+        var match = (wsLayout.style.gridTemplateColumns || '').match(/^(\d+)px/);
+        startLeftWidth = match ? parseInt(match[1], 10) : 220;
+        resizer.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+      });
+
+      document.addEventListener('mousemove', function (e) {
+        if (!isResizing) return;
+        var dx = e.clientX - startX;
+        var newWidth = Math.max(160, Math.min(420, startLeftWidth + dx));
+        if (window.innerWidth < 960) { wsLayout.style.gridTemplateColumns = ''; return; }
+        wsLayout.style.gridTemplateColumns = newWidth + 'px 4px minmax(400px, 1fr)';
+      });
+
+      document.addEventListener('mouseup', function () {
+        if (!isResizing) return;
+        isResizing = false;
+        resizer.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      });
+    }
+
+    // CKP-004-22 P1: 任务队列折叠
+    var tqCollapseBtn = document.getElementById('tq-collapse-btn');
+    if (tqCollapseBtn) {
+      tqCollapseBtn.addEventListener('click', function () {
+        state.taskQueueCollapsed = !state.taskQueueCollapsed;
+        var panel = document.getElementById('task-queue-panel');
+        if (panel) panel.classList.toggle('collapsed', state.taskQueueCollapsed);
+        this.textContent = state.taskQueueCollapsed ? '▼' : '▲';
+        this.title = state.taskQueueCollapsed ? '展开' : '折叠';
+      });
+    }
   }
 
   // CKP-004-09/13: Top action bar (now above property workbench inside ws-center)
@@ -2179,14 +3556,15 @@
 
     var node = state.selectedNode;
     var checkedParts = getCheckedPartCount();
+    var canReadProps = hasActiveDocumentContext() || node || checkedParts > 0;
 
     bar.innerHTML =
-      '<button class="ws-action-btn" data-action="read_props"' + (node ? '' : ' disabled') + '>📖 读取属性</button>' +
-      '<button class="ws-action-btn" data-action="check_props"' + (node ? '' : ' disabled') + '>🔍 属性检查</button>' +
+      '<button class="ws-action-btn" data-action="read_props"' + (canReadProps ? '' : ' disabled') + '>📖 读取属性</button>' +
+      '<button class="ws-action-btn" data-action="check_props"' + ((node || checkedParts > 0) ? '' : ' disabled') + '>🔍 属性检查</button>' +
       '<button class="ws-action-btn primary" data-action="review_props"' + (checkedParts > 0 ? '' : ' disabled') + '>📋 属性审核</button>' +
-      '<button class="ws-action-btn" data-action="bom_locate"' + (node ? '' : ' disabled') + '>📍 BOM定位</button>' +
-      '<button class="ws-action-btn" data-action="ai_analyze"' + (node ? '' : ' disabled') + '>🤖 AI分析</button>' +
-      '<button class="ws-action-btn" data-action="refresh_context">🔄 刷新上下文</button>';
+      '<button class="ws-action-btn" data-action="bom_locate"' + ((node || checkedParts > 0) ? '' : ' disabled') + '>📍 BOM定位</button>' +
+      '<button class="ws-action-btn" data-action="ai_analyze"' + ((node || checkedParts > 0) ? '' : ' disabled') + '>🤖 AI分析</button>';
+    // CKP-004-22: 删除 action bar 中的 refresh_context 按钮（标题栏已有统一入口）
 
     bar.querySelectorAll('.ws-action-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -2209,7 +3587,7 @@
     html += '</div>';
 
     // Task list
-    if (state.taskDrafts.length === 0 && state.tasks.length === 0) {
+    if (state.taskDrafts.length === 0 && state.submittedJobs.length === 0 && !(state.activeJob && !state.activeJob.job_id)) {
       html += '<div class="task-empty">' +
         '<div class="task-empty-text">暂无任务</div>' +
         '<div class="task-empty-hint">点击上方按钮创建任务草稿，选中对象后再创建可绑定对象。</div>' +
@@ -2218,14 +3596,14 @@
       // Drafts
       state.taskDrafts.slice().reverse().forEach(function (d) {
         var isCurrent = d.taskId === state.currentTaskId;
-        html += '<div class="task-item task-draft' + (isCurrent ? ' task-current' : '') + '" data-task-id="' + d.taskId + '">' +
+        html += '<div class="task-item task-draft' + (isCurrent ? ' task-current' : '') + '" data-task-id="' + esc(d.taskId) + '">' +
           '<span class="task-icon">📝</span>' +
           '<span class="task-name">' + esc(d.title || d.name || '草稿') + '</span>' +
           '<span class="task-obj-count">' + (d.selectedObjectCount || 0) + '对象</span>' +
           '<span class="task-badge draft">草稿</span></div>';
       });
       // Completed tasks
-      state.tasks.slice(-5).reverse().forEach(function (t) {
+      getAllSubmittedJobsForDisplay().slice(0, 5).forEach(function (t) {
         var cls = t.status === 'completed' ? 'ok' : (t.status === 'failed' ? 'err' : 'run');
         var badge = t.status === 'completed' ? '完成' : (t.status === 'failed' ? '失败' : '执行中');
         html += '<div class="task-item task-' + cls + '"><span class="task-icon">' + (cls === 'ok' ? '✅' : cls === 'err' ? '❌' : '⏳') +
@@ -2272,7 +3650,7 @@
     });
     // CKP-004-13: Update total count
     var countEl = document.getElementById('tq-total-count');
-    if (countEl) countEl.textContent = state.taskDrafts.length + state.tasks.length;
+    if (countEl) countEl.textContent = getTaskQueueCount();
   }
 
   // CKP-004-08: Submit a task draft
@@ -2331,6 +3709,7 @@
     selectTask(draft.taskId);
 
     draft.status = 'submitting';
+    draft.submittedAt = new Date().toISOString();
     persistTaskDrafts();
     refreshTaskList();
 
@@ -2345,25 +3724,41 @@
 
     submitJob('material.properties.review.submit', payload, '属性审核 (草稿提交)');
 
-    // Monitor job completion to update draft status
+    // CKP-004-23 P0-2.1: 300s 超时兜底（C# 崩溃不回传时定时器不会泄漏）
+    var _guardTimer = null;
     var checkTimer = setInterval(function () {
       if (!state.activeJob || state.activeJob.job_id && isTerminalJobStatus(state.activeJob.status)) {
         clearInterval(checkTimer);
+        if (_guardTimer) { clearTimeout(_guardTimer); _guardTimer = null; }
         draft.status = state.activeJob && state.activeJob.status === 'completed' ? 'completed' :
                        state.activeJob && state.activeJob.status === 'partial_failed' ? 'partial_failed' :
                        state.activeJob && state.activeJob.status === 'failed' ? 'failed' : 'submitted';
         draft.submittedJobId = state.activeJob ? state.activeJob.job_id : '';
+        if (state.activeJob) {
+          if (state.activeJob.submitted_at) draft.submittedAt = state.activeJob.submitted_at;
+          if (state.activeJob.started_at) draft.startedAt = state.activeJob.started_at;
+          if (state.activeJob.completed_at) draft.completedAt = state.activeJob.completed_at;
+        }
         persistTaskDrafts();
         refreshTaskList();
         showToast('属性审核任务' + (draft.status === 'completed' ? '已完成' : draft.status === 'partial_failed' ? '部分失败' : draft.status === 'failed' ? '失败' : '已提交'));
       }
     }, 1000);
+    _guardTimer = setTimeout(function () {
+      clearInterval(checkTimer);
+      draft.status = 'failed';
+      draft.errorMsg = '任务超时（无回调）';
+      draft.completedAt = new Date().toISOString();
+      persistTaskDrafts();
+      refreshTaskList();
+    }, 300000);
   }
 
   // CKP-004-08: Submit AI analysis task with taskContext
   function submitAIAnalysisTask(draft) {
     selectTask(draft.taskId);
     draft.status = 'submitting';
+    draft.submittedAt = new Date().toISOString();
     persistTaskDrafts();
     refreshTaskList();
 
@@ -2382,7 +3777,9 @@
       current_stage: '提交中',
       source: 'ai.assistant.chat',
       chat_message: 'AI 分析任务: ' + (draft.title || '未命名'),
-      submitted_at: new Date(),
+      submitted_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
       request_id: null,
       payload: null
     };
@@ -2424,10 +3821,11 @@
       addAIMessage('system', state.activeJob.message);
     }
 
-    // Monitor job to update draft status
+    var _guardTimer2 = null;
     var checkTimer = setInterval(function () {
       if (!state.activeJob || state.activeJob.job_id && isTerminalJobStatus(state.activeJob.status)) {
         clearInterval(checkTimer);
+        if (_guardTimer2) { clearTimeout(_guardTimer2); _guardTimer2 = null; }
         draft.status = state.activeJob && (state.activeJob.status === 'completed' || state.activeJob.status === 'partial_failed') ? 'completed' :
                        state.activeJob && state.activeJob.status === 'failed' ? 'failed' : 'submitted';
         draft.submittedJobId = state.activeJob ? state.activeJob.job_id : '';
@@ -2436,6 +3834,13 @@
         showToast('AI 分析任务' + (draft.status === 'completed' ? '已完成' : draft.status === 'failed' ? '失败' : '已提交'));
       }
     }, 1000);
+    _guardTimer2 = setTimeout(function () {
+      clearInterval(checkTimer);
+      draft.status = 'failed';
+      draft.errorMsg = 'AI 分析任务超时（无回调）';
+      persistTaskDrafts();
+      refreshTaskList();
+    }, 300000);
   }
 
   function updateAIHeader() {
@@ -2461,33 +3866,32 @@
   }
 
   // Default key property names (matches config.json read_property_names)
-  var DEFAULT_KEY_PROPERTIES = ['物料名称', '图号', '材料', '重量', '表面处理', '处理状态', '处理人', '处理日期'];
+  var DEFAULT_KEY_PROPERTIES = ['物料编码', '物料名称', '规格型号', '材质', '表面处理', '设计人', '物料状态'];
 
   // Property field aliases (CKP-004-05 + CKP-004-07 expansion)
   var PROP_ALIASES = {
     '物料编码': ['物料编码', 'W物料编码', 'FileBM', '物料代码', '编码', 'PartNumber', '零件号', 'MaterialCode'],
     '物料名称': ['物料名称', 'W物料名称', '名称', 'Description', 'PartName', '零件名称'],
     '规格型号': ['规格型号', 'G规格型号', '规格', '型号', 'Specification', 'Model'],
-    '材料':     ['材料', 'C材质', '材质', 'Material', 'C材料', 'C_Material'],
+    '材质':     ['材质', 'C材质', '材料', 'Material', 'C材料', 'C_Material'],
     '表面处理': ['表面处理', 'SurfaceTreatment', '表面處理', 'Finish', 'Coating'],
-    '处理状态': ['处理状态', 'Status', 'WorkflowState', 'State', '流程状态', '审核状态'],
-    '处理人':   ['处理人', 'Handler', 'Auditor', 'Operator', '审核人', '操作人', 'CheckedBy'],
-    '处理日期': ['处理日期', 'HandleDate', 'Date', 'AuditDate', 'CheckDate', '审核日期', '操作日期']
+    '设计人':   ['设计人', '设计', 'Designer', '设计人员', '设计者', 'DesignedBy', 'Author', '创建者'],
+    '物料状态': ['物料状态']
   };
 
   var PROP_COLUMNS = [
     { key: 'fileName', label: '文件名称', intrinsic: true },
     { key: 'docType', label: '文件类型', intrinsic: true },
+    { key: 'instanceCount', label: '实例数', intrinsic: true },
     { key: 'filePath', label: '文件路径', intrinsic: true },
     { key: 'fileSize', label: '文件大小', intrinsic: true },
     { key: '物料编码', label: '物料编码' },
     { key: '物料名称', label: '物料名称' },
     { key: '规格型号', label: '规格型号' },
-    { key: '材料', label: '材料' },
+    { key: '材质', label: '材质' },
     { key: '表面处理', label: '表面处理' },
-    { key: '处理状态', label: '处理状态' },
-    { key: '处理人', label: '处理人' },
-    { key: '处理日期', label: '处理日期' }
+    { key: '设计人', label: '设计人' },
+    { key: '物料状态', label: '物料状态' }
   ];
 
   function getKeyPropertyNames() {
@@ -2498,15 +3902,65 @@
     return DEFAULT_KEY_PROPERTIES;
   }
 
+  function mapProps(properties) {
+    var mapped = {};
+    properties = properties || {};
+    Object.keys(properties).forEach(function (key) {
+      var value = properties[key] || {};
+      mapped[key] = {
+        raw: value.RawValue != null ? value.RawValue : (value.rawValue != null ? value.rawValue : value.raw),
+        resolved: value.ResolvedValue != null ? value.ResolvedValue : (value.resolvedValue != null ? value.resolvedValue : value.resolved)
+      };
+    });
+    return mapped;
+  }
+
+  function mapRowProperties(row) {
+    row = row || {};
+    var mapped = mapProps(row.Properties || row.properties);
+    var flat = row.ResolvedProperties || row.resolvedProperties || {};
+    Object.keys(flat).forEach(function (key) {
+      var val = flat[key];
+      if (val == null || val === '') return;
+      if (!mapped[key] || !(mapped[key].resolved || mapped[key].raw)) {
+        mapped[key] = { raw: val, resolved: val };
+      }
+    });
+    return mapped;
+  }
+
   // ── Property value resolver with alias support (CKP-004-07 enhanced) ──
+  function lookupPropertyRowForNode(node) {
+    if (!node || !state.context || !state.context._propertyIndex) return null;
+    var idx = state.context._propertyIndex;
+    var pivot = node.pivotKey || node.PivotKey || '';
+    if (pivot && idx.byPivot && idx.byPivot[pivot]) return idx.byPivot[pivot];
+    var fp = normalizeFilePath(node.filePath || node.FilePath || '');
+    if (fp && idx.byFilePath && idx.byFilePath[fp]) return idx.byFilePath[fp];
+    var comp = (node.componentName || node.ComponentName || node.displayName || node.name || '').trim();
+    var cfg = (node.configuration || node.Configuration || '(默认)').trim();
+    if (comp && idx.byCompKey) {
+      var ck = comp.toLowerCase() + '|' + cfg.toLowerCase();
+      if (idx.byCompKey[ck]) return idx.byCompKey[ck];
+      var ckDefault = comp.toLowerCase() + '|(默认)';
+      if (idx.byCompKey[ckDefault]) return idx.byCompKey[ckDefault];
+    }
+    return null;
+  }
+
   function resolvePropValue(node, propKey) {
     if (!node) return '';
     // Intrinsic fields
     if (propKey === 'fileName') return node.name || '';
     if (propKey === 'docType') return node.docType || node.type || '';
-    if (propKey === 'filePath') return node.filePath || '';
+    if (propKey === 'filePath') {
+      var fp = node.filePath || '';
+      if (isUsableFilePath(fp)) return fp;
+      if (fp === '不可用') return '不可用';
+      return fp;
+    }
     if (propKey === 'fileSize') return node.fileSize || '';
-    // Custom properties with alias lookup
+    // Custom properties with alias lookup (values come from SW custom properties only)
     var aliases = PROP_ALIASES[propKey] || [propKey];
     for (var i = 0; i < aliases.length; i++) {
       var v = node.properties && node.properties[aliases[i]];
@@ -2515,58 +3969,72 @@
         if (display) return display;
       }
     }
-    // CKP-004-07: 尝试从 name/filePath 解析更多信息
-    // 对于物料编码/名称，节点 name 可能包含有用信息
-    if (propKey === '物料名称' && node.name) {
-      // 去扩展名
-      var nameNoExt = node.name.replace(/\.(SLDPRT|SLDASM|SLDDRW|sldprt|sldasm|slddrw)$/i, '');
-      if (nameNoExt !== node.name) return nameNoExt;
+    var row = lookupPropertyRowForNode(node);
+    if (row) {
+      var rowProps = mapRowProperties(row);
+      for (var j = 0; j < aliases.length; j++) {
+        var rv = rowProps[aliases[j]];
+        if (rv) {
+          var rowDisplay = rv.resolved || rv.raw || '';
+          if (rowDisplay) return rowDisplay;
+        }
+      }
     }
+    // CKP-004-19 Bug 5: 实例数
+    if (propKey === 'instanceCount') return String(node.quantity || 1);
     return '';
   }
 
-  // ── Collect all checked part nodes ──
+  // ── Collect all checked part nodes (deduplicated by filePath) ──
   function getCheckedPartNodes() {
     var nodes = [];
     if (!state.context || !state.context.tree) return nodes;
-    collectCheckedParts(state.context.tree, nodes);
+    var seen = {};
+    // 从 tree.children 开始，跳过 root（root properties 为空，属性在子节点）
+    if (state.context.tree.children) {
+      state.context.tree.children.forEach(function (child) {
+        collectCheckedParts(child, nodes, seen);
+      });
+    }
     return nodes;
   }
 
-  function collectCheckedParts(node, out) {
+  function collectCheckedParts(node, out, seen) {
     if (!node) return;
-    if (state.checkedNodeIds.has(node.id) && isPartNode(node)) {
-      out.push(node);
+    seen = seen || {};
+    if (isPartNode(node) && state.checkedNodeIds.has(node.id)) {
+      var dedupKey = getNodeGroupKey(node);
+      if (!seen[dedupKey]) {
+        seen[dedupKey] = true;
+        out.push(node);
+      }
+      return; // part 是叶子，不再递归
     }
     if (node.children) {
-      node.children.forEach(function (c) { collectCheckedParts(c, out); });
+      node.children.forEach(function (c) { collectCheckedParts(c, out, seen); });
     }
   }
 
-  // ── Property workbench table (CKP-004-09: show selected node when 0 checked) ──
+  // CKP-004-19: 收集树中所有 part 节点（属性表空时回退用）
+  function collectAllParts(node, out) {
+    if (!node) return;
+    if (isPartNode(node)) out.push(node);
+    if (node.children) {
+      node.children.forEach(function (c) { collectAllParts(c, out); });
+    }
+  }
+
+  // ── Property workbench table (CKP-004-19: only checked parts, no fallback) ──
   function renderPropertyWorkbench() {
     var wb = document.getElementById('prop-workbench');
     if (!wb) return;
 
-    var partNodes = getCheckedPartNodes();
-    // CKP-004-09: 如果没有勾选零件，尝试展示当前选中节点
-    if (partNodes.length === 0 && state.selectedNode && state.selectedNode.id !== 'root') {
-      var sn = state.selectedNode;
-      if (isPartNode(sn)) {
-        partNodes = [sn];
-      } else if (sn.children && sn.children.length > 0) {
-        // 选中装配体时，展示其直接子零件
-        partNodes = [];
-        (sn.children || []).forEach(function (c) {
-          if (isPartNode(c)) partNodes.push(c);
-        });
-      }
-    }
+    var workspaceItems = getWorkspaceItems();
     var countEl = document.getElementById('prop-table-count');
-    if (countEl) countEl.textContent = partNodes.length + ' 个零件';
+    if (countEl) countEl.textContent = workspaceItems.length + ' 个零件';
 
-    if (partNodes.length === 0) {
-      wb.innerHTML = '<div class="prop-empty-info">请在设计树中勾选零件以查看属性，或点击"刷新上下文"加载 SW 数据。</div>';
+    if (workspaceItems.length === 0) {
+      wb.innerHTML = '<div class="prop-empty-info">请在设计树中勾选零件以查看属性，或点击"读取属性"加载 SW 数据。</div>';
       return;
     }
 
@@ -2576,15 +4044,17 @@
     });
     html += '</tr></thead><tbody>';
 
-    partNodes.forEach(function (node, idx) {
-      var isSelected = state.selectedNode && state.selectedNode.id === node.id;
+    workspaceItems.forEach(function (item) {
+      var node = item.node;
+      var isSelected = state.selectedNode && item.nodeIds.indexOf(state.selectedNode.id) >= 0;
       html += '<tr class="prop-row' + (isSelected ? ' prop-selected' : '') + '" data-node-id="' + node.id + '">';
       PROP_COLUMNS.forEach(function (col) {
         var val = resolvePropValue(node, col.key);
-        var cls = val ? '' : ' class="prop-empty"';
+        if (col.key === 'instanceCount') val = String(item.instanceCount || node.quantity || 1);
         var display = val || '—';
-        var title = col.key === 'filePath' ? ' title="' + esc(val) + '"' : '';
-        html += '<td' + cls + title + '>' + esc(display) + '</td>';
+        var title = col.key === 'filePath' && val ? ' title="' + esc(val) + '"' : '';
+        var tdClass = col.key === 'filePath' ? ' class="prop-file-path"' : (val ? '' : ' class="prop-empty"');
+        html += '<td' + tdClass + title + '>' + esc(display) + '</td>';
       });
       html += '</tr>';
     });
@@ -2629,54 +4099,28 @@
         status: d.status || 'draft',
         queuePos: d.queuePos || d.submittedQueuePos || '',
         submittedJobId: d.submittedJobId || '',
+        sortTime: d.submittedAt || d.createdAt,
+        times: {
+          created_at: d.createdAt,
+          submitted_at: d.submittedAt,
+          started_at: d.startedAt,
+          completed_at: d.completedAt
+        },
         draft: d
       });
     });
 
-    // Submitted tasks (from state.tasks + active job)
-    state.tasks.forEach(function (t, idx) {
-      allEntries.push({
-        isDraft: false,
-        taskId: t.taskId || t.job_id || ('task-' + idx),
-        title: t.source || t.type || t.title || 'task',
-        taskType: t.type || t.taskType || '',
-        typeLabel: t.type || t.taskType || '',
-        typeIcon: '📤',
-        objCount: t.total_items || t.components ? t.components.length : 0,
-        status: t.status || 'unknown',
-        queuePos: t.queue_position != null ? '#' + (Number(t.queue_position)+1) : '',
-        submittedJobId: t.job_id || t.submittedJobId || '',
-        draft: null
-      });
+    // Submitted Hermes jobs (persisted history)
+    state.submittedJobs.forEach(function (job) {
+      allEntries.push(jobRecordToQueueEntry(job, { isActiveJob: state.activeJob && state.activeJob.job_id === job.job_id }));
     });
 
-    // Active job also shows as entry with progress + results
-    var aj = state.activeJob;
-    if (aj && !allEntries.some(function(e){return e.submittedJobId===aj.job_id&&aj.job_id;})){
-      var ajProgress = Number(aj.progress_percent || 0);
-      var ajCompleted = aj.completed_items != null ? aj.completed_items : 0;
-      var ajTotal = aj.total_items != null ? aj.total_items : (aj.payload&&aj.payload.components?aj.payload.components.length:0);
-      allEntries.push({
-        isDraft: false,
-        isActiveJob: true,
-        taskId: aj.job_id || ('active-' + Date.now()),
-        title: aj.source || '当前任务',
-        taskType: aj.source || '',
-        typeLabel: aj.source || '',
-        typeIcon: aj.status==='running'?'⚡':(aj.status==='completed'?'✅':'⏳'),
-        objCount: ajTotal,
-        status: aj.status || 'running',
-        queuePos: aj.queue_position != null ? '#' + (Number(aj.queue_position)+1) : '',
-        submittedJobId: aj.job_id || '',
-        progress: ajProgress,
-        completedItems: ajCompleted,
-        totalItems: ajTotal,
-        currentStage: aj.current_stage || '',
-        jobMessage: aj.message || '',
-        results: aj.results || null,
-        draft: null
-      });
+    // Pending submit (no job_id yet)
+    if (state.activeJob && (!state.activeJob.job_id || findSubmittedJobIndex(state.activeJob.job_id) < 0)) {
+      allEntries.push(jobRecordToQueueEntry(state.activeJob, { isActiveJob: true }));
     }
+
+    sortTaskQueueEntries(allEntries);
 
     // Filter by current tab
     var filter = state.taskQueueFilter || 'all';
@@ -2709,17 +4153,21 @@
         var canSubmit = e.status === 'draft';
         var canDelete = e.status === 'draft' || e.status === 'queued';
         var canDetail = true;
+        var entryTimes = getEntryTimes(e);
+        var timeLabel = getTaskQueueTimeLabel(entryTimes, e.status);
+        var timeTitle = buildTaskTimeTitle(entryTimes, e.status);
 
-        html += '<div class="tq-card' + (isCurrent ? ' tq-current' : '') + '" data-task-id="' + e.taskId + '">' +
+        html += '<div class="tq-card' + (isCurrent ? ' tq-current' : '') + '" data-task-id="' + esc(e.taskId) + '">' +
           '<span class="tq-col-pos">' + esc(e.queuePos) + '</span>' +
           '<span class="tq-col-type" title="' + esc(e.typeLabel || e.taskType) + '">' + (e.typeIcon||'') + ' ' + esc(e.typeLabel || e.taskType) + '</span>' +
           '<span class="tq-col-id" title="' + esc(e.taskId) + '">' + esc(e.taskId) + '</span>' +
           '<span class="tq-col-obj">' + (e.objCount > 0 ? '×' + e.objCount : '-') + '</span>' +
+          '<span class="tq-col-time" title="' + esc(timeTitle) + '">' + esc(timeLabel) + '</span>' +
           '<span class="tq-col-status"><span class="tq-badge ' + statusCls + '">' + esc(statusText) + '</span></span>' +
           '<span class="tq-col-act">' +
-            (canDetail ? '<button class="tq-btn tq-detail" data-task-id="' + e.taskId + '">详情</button>' : '') +
-            (canSubmit ? '<button class="tq-btn tq-submit" data-task-id="' + e.taskId + '">提交</button>' : '') +
-            (canDelete ? '<button class="tq-btn tq-delete" data-task-id="' + e.taskId + '">删除</button>' : '') +
+            (canDetail ? '<button class="tq-btn tq-detail" data-task-id="' + esc(e.taskId) + '">详情</button>' : '') +
+            (canSubmit ? '<button class="tq-btn tq-submit" data-task-id="' + esc(e.taskId) + '">提交</button>' : '') +
+            (canDelete ? '<button class="tq-btn tq-delete" data-task-id="' + esc(e.taskId) + '">删除</button>' : '') +
           '</span>' +
         '</div>';
       });
@@ -2738,38 +4186,36 @@
           taskId: d.taskId, taskType: d.taskType,
           typeLabel: (TASK_TYPES.find(function(t){return t.type===d.taskType;})||TASK_TYPES[0]).label,
           status: d.status || 'draft', submittedJobId: d.submittedJobId || '',
-          objCount: d.selectedObjectCount || 0, draft: d, isActiveJob: false
+          objCount: d.selectedObjectCount || 0,
+          times: {
+            created_at: d.createdAt,
+            submitted_at: d.submittedAt,
+            started_at: d.startedAt,
+            completed_at: d.completedAt
+          },
+          draft: d, isActiveJob: false
         };
       }
     });
     if (!entry) {
-      state.tasks.forEach(function (t) {
-        if ((t.taskId || t.job_id) === taskId) {
-          entry = {
-            taskId: t.taskId || t.job_id, taskType: t.type || t.taskType || '',
-            typeLabel: t.type || t.taskType || '', status: t.status || 'unknown',
-            submittedJobId: t.job_id || '', objCount: t.total_items || 0, draft: null, isActiveJob: false
-          };
+      state.submittedJobs.forEach(function (job) {
+        var jid = job.job_id || job.taskId;
+        if (jid === taskId) {
+          entry = jobRecordToQueueEntry(job, { isActiveJob: state.activeJob && state.activeJob.job_id === jid });
+          entry.draft = null;
         }
       });
     }
-    if (!entry && state.activeJob && state.activeJob.job_id === taskId) {
+    if (!entry && state.activeJob && (state.activeJob.job_id === taskId || state.activeJob._pendingId === taskId)) {
       var aj = state.activeJob;
-      entry = {
-        taskId: aj.job_id, taskType: aj.source || '', typeLabel: aj.source || '',
-        status: aj.status || 'running', submittedJobId: aj.job_id,
-        objCount: aj.total_items || 0, draft: null, isActiveJob: true,
-        progress: aj.progress_percent, completedItems: aj.completed_items,
-        totalItems: aj.total_items, currentStage: aj.current_stage,
-        jobMessage: aj.message, results: aj.results
-      };
+      entry = jobRecordToQueueEntry(aj, { isActiveJob: true });
     }
     if (!entry) { showToast('任务详情不存在'); return; }
     showTaskDetailModal(entry);
   }
 
   function showTaskDetailModal(e) {
-    var statusText = e.status === 'draft' ? '草稿' : e.status === 'queued' ? '排队中' : e.status === 'submitting' ? '提交中' : e.status === 'running' ? '执行中' : e.status === 'completed' ? '已完成' : e.status === 'failed' ? '失败' : e.status === 'partial_failed' ? '部分失败' : e.status;
+    var statusText = e.status === 'draft' ? '草稿' : e.status === 'queued' ? '排队中' : e.status === 'submitting' ? '提交中' : e.status === 'running' ? '执行中' : e.status === 'local_running' ? '本地执行中' : e.status === 'completed' ? '已完成' : e.status === 'failed' ? '失败' : e.status === 'partial_failed' ? '部分失败' : e.status;
     var statusCls = e.status === 'draft' ? 'draft' : e.status === 'completed' ? 'ok' : e.status === 'failed' ? 'err' : e.status === 'partial_failed' ? 'warn' : 'run';
     var lines = [];
     lines.push('<tr><td>任务ID</td><td>' + esc(e.taskId) + '</td></tr>');
@@ -2777,7 +4223,16 @@
     lines.push('<tr><td>状态</td><td><span class="tq-badge ' + statusCls + '">' + esc(statusText) + '</span></td></tr>');
     if (e.submittedJobId) lines.push('<tr><td>Hermes Job ID</td><td>' + esc(e.submittedJobId) + '</td></tr>');
     lines.push('<tr><td>对象数</td><td>' + e.objCount + '</td></tr>');
-    if (e.isActiveJob) {
+    buildTaskTimingDetailRows(getEntryTimes(e), e.status).forEach(function (row) {
+      lines.push('<tr><td>' + esc(row[0]) + '</td><td>' + esc(row[1]) + '</td></tr>');
+    });
+    if (e.isActiveJob || e.reviewItems || e.summary || e.submittedJobId) {
+      var jobForDetail = getJobById(e.submittedJobId || e.taskId) || (e.isActiveJob ? state.activeJob : null);
+      buildAgentReviewDetailRows(jobForDetail || e).forEach(function (row) {
+        lines.push('<tr><td>' + esc(row[0]) + '</td><td>' + esc(row[1]) + '</td></tr>');
+      });
+    }
+    if (e.isActiveJob || e.progress != null || e.currentStage || e.jobMessage) {
       lines.push('<tr><td>进度</td><td>' + (e.progress != null ? Math.round(e.progress) + '%' : '-') + '</td></tr>');
       lines.push('<tr><td>完成/总数</td><td>' + (e.completedItems != null ? e.completedItems : '-') + '/' + (e.totalItems || '-') + '</td></tr>');
       lines.push('<tr><td>当前阶段</td><td>' + esc(e.currentStage || '-') + '</td></tr>');
@@ -2795,7 +4250,6 @@
       if (e.draft.selectedObjectNames && e.draft.selectedObjectNames.length > 0) {
         lines.push('<tr><td>绑定对象</td><td>' + esc(e.draft.selectedObjectNames.join(', ')) + '</td></tr>');
       }
-      if (e.draft.createdAt) lines.push('<tr><td>创建时间</td><td>' + esc(e.draft.createdAt) + '</td></tr>');
       if (e.draft.snapshotId) lines.push('<tr><td>快照ID</td><td>' + esc(e.draft.snapshotId) + '</td></tr>');
       if (e.draft.errorMsg) lines.push('<tr><td>错误</td><td><span class="warn">' + esc(e.draft.errorMsg) + '</span></td></tr>');
     }
@@ -2930,9 +4384,10 @@
 
     var node = state.selectedNode;
     var checkedParts = getCheckedPartCount();
+    var canReadProps = hasActiveDocumentContext() || node || checkedParts > 0;
 
     list.innerHTML =
-      '<button class="action-btn" data-action="read_props"' + (node ? '' : ' disabled') + '>读取属性</button>' +
+      '<button class="action-btn" data-action="read_props"' + (canReadProps ? '' : ' disabled') + '>读取属性</button>' +
       '<button class="action-btn" data-action="check_props"' + (node ? '' : ' disabled') + '>属性检查</button>' +
       '<button class="action-btn primary action-btn-review" data-action="review_props"' + (checkedParts > 0 ? '' : ' disabled') + '>属性审核</button>' +
       '<button class="action-btn" data-action="bom_locate"' + (node ? '' : ' disabled') + '>BOM定位</button>' +
@@ -2950,17 +4405,25 @@
 
   function handleAction(action) {
     var node = state.selectedNode;
-    var payload = node ? { nodeId: node.id, name: node.name, filePath: node.filePath } : {};
+    var checkedComponents = getCheckedComponents();
+    var primary = node || (checkedComponents.length === 1 ? findNodeById(state.context && state.context.tree, checkedComponents[0].component_id) : null);
+    var payload = {
+      nodeId: primary ? primary.id : '',
+      name: primary ? primary.name : '',
+      filePath: primary ? primary.filePath : '',
+      checkedNodeIds: Array.from(state.checkedNodeIds),
+      components: checkedComponents
+    };
 
     switch (action) {
       case 'read_props':
-        window.MechPilot.sendCommand('local.read_properties', payload);
-        addAIMessage('system', '已发送读取属性请求：' + (node ? node.name : ''));
+        window.MechPilot.sendCommand('local.read_properties', { refresh_context: true });
+        addAIMessage('system', '已发送读取属性请求，正在从 SolidWorks 刷新属性…');
         break;
       case 'check_props':
         // 本地属性检查/更新
         window.MechPilot.sendCommand('local.properties.check', payload);
-        addAIMessage('system', '已发送属性检查请求：' + (node ? node.name : ''));
+        addAIMessage('system', '已发送属性检查请求：' + (primary ? primary.name : (checkedComponents.length + ' item(s)')));
         break;
       case 'review_props':
         if (getCheckedPartCount() === 0) {
@@ -2980,15 +4443,15 @@
         break;
       case 'bom_locate':
         window.MechPilot.sendCommand('bom.locate', payload);
-        addAIMessage('system', '已发送BOM定位请求：' + (node ? node.name : ''));
+        addAIMessage('system', '已发送BOM定位请求：' + (primary ? primary.name : (checkedComponents.length + ' item(s)')));
         break;
       case 'ai_analyze':
         var aiPayload = {
-          node: node ? { id: node.id, name: node.name, type: node.type, filePath: node.filePath } : null,
+          node: primary ? { id: primary.id, name: primary.name, type: primary.type, filePath: primary.filePath } : null,
           page: 'workspace'
         };
         window.MechPilot.sendCommand('ai.node.analyze', aiPayload);
-        addAIMessage('ai', '正在分析选中对象：' + (node ? node.name : '') + '…');
+        addAIMessage('ai', '正在分析选中对象：' + (primary ? primary.name : (checkedComponents.length + ' item(s)')) + '…');
         break;
       case 'refresh_context':
         window.MechPilot.sendCommand('refresh_context', {});
@@ -3150,7 +4613,7 @@
       var snippet = item.snippet || item.content || item.text || '';
 
       if (typeof score === 'number') {
-        score = (score * 100).toFixed(1) + '%';
+        score = (score <= 1 ? score * 100 : score).toFixed(1) + '%';
       }
 
       html += '<tr>' +
@@ -3207,7 +4670,7 @@
     document.getElementById('btn-mat-search').addEventListener('click', function () {
       var query = document.getElementById('mat-query').value;
       var material = document.getElementById('mat-material').value;
-      var topk = parseInt(document.getElementById('mat-topk').value) || rag.ragTopK;
+      var topk = parseInt(document.getElementById('mat-topk').value, 10) || rag.ragTopK;
 
       var payload = {
         query: query,

@@ -11,6 +11,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -83,6 +84,9 @@ namespace SwAgentAddin
         // Document event handlers
         private Hashtable _openDocuments;
         private bool _autoRefreshEnabled = false;
+        /// <summary>仅 local.read_properties 置 true：装配体内 Resolve 轻化件读属性，禁止 OpenDoc6 逐个开文件。</summary>
+        private bool _resolveLightweightForPropertyRead;
+        private List<IComponent2> _lightweightComponentsToRestore;
 
         #endregion
 
@@ -794,7 +798,7 @@ namespace SwAgentAddin
                     return;
                 }
 
-                _cockpitForm = new CockpitForm(_config, BuildCockpitContext, HandleCockpitCommand);
+                _cockpitForm = new CockpitForm(_config, BuildCockpitContext, HandleCockpitCommandAsync);
                 _cockpitForm.FormClosed += (s, e) => { _cockpitForm = null; };
                 _cockpitForm.Show();
             }
@@ -951,7 +955,7 @@ namespace SwAgentAddin
                     return;
                 }
 
-                _cockpitForm = new CockpitForm(_config, BuildCockpitContext, HandleCockpitCommand);
+                _cockpitForm = new CockpitForm(_config, BuildCockpitContext, HandleCockpitCommandAsync);
                 _cockpitForm.FormClosed += (s, e) => { _cockpitForm = null; };
                 _cockpitForm.Show();
                 _cockpitForm.NavigatePage(page);
@@ -980,6 +984,11 @@ namespace SwAgentAddin
         /// </summary>
         private void ExecuteLocalTool(string feature, string action, string displayName)
         {
+            _ = ExecuteLocalToolAsync(feature, action, displayName);
+        }
+
+        private async Task ExecuteLocalToolAsync(string feature, string action, string displayName)
+        {
             try
             {
                 if (_actionRouter != null)
@@ -992,7 +1001,7 @@ namespace SwAgentAddin
                         Action = action,
                         Executor = "local"
                     };
-                    string resultJson = _actionRouter.HandleCommand(cmd.ToJson());
+                    string resultJson = await _actionRouter.HandleCommandAsync(cmd.ToJson()).ConfigureAwait(true);
                     WriteTrace("ExecuteLocalTool " + feature + "." + action + ": " + resultJson);
                     SafeMessage(displayName + " 已执行。详情请查看日志。", MessageBoxIcon.Information);
                 }
@@ -1030,9 +1039,9 @@ namespace SwAgentAddin
         }
 
         /// <summary>
-        /// WebView2 cockpit 命令桥 — 前端 JS 通过 WebMessageReceived 发送 JSON 命令
+        /// WebView2 cockpit 命令桥 — 前端 JS 通过 WebMessageReceived 发送 JSON 命令（异步，避免阻塞 STA）
         /// </summary>
-        private string HandleCockpitCommand(string commandJson)
+        private async Task<string> HandleCockpitCommandAsync(string commandJson)
         {
             try
             {
@@ -1062,17 +1071,20 @@ namespace SwAgentAddin
                         return MakeCockpitResult(requestId, true, "Auto-refresh " + (enabled ? "已开启" : "已关闭"), null, null);
 
                     case "local.read_properties":
-                        string contextJson = BuildCockpitContext();
+                        _resolveLightweightForPropertyRead = true;
+                        string ctxJsonRead = BuildCockpitContext();
                         return MakeCockpitResult(requestId, true, null, null, new Dictionary<string, object>
                         {
-                            ["context"] = serializer.DeserializeObject(contextJson)
+                            ["command"] = command,
+                            ["context_json"] = ctxJsonRead
                         });
 
                     case "refresh_context":
-                        string ctx = BuildCockpitContext();
+                        string ctxJson = BuildCockpitContext();
                         return MakeCockpitResult(requestId, true, null, null, new Dictionary<string, object>
                         {
-                            ["context"] = serializer.DeserializeObject(ctx)
+                            ["command"] = command,
+                            ["context_json"] = ctxJson
                         });
 
                     case "window_close":
@@ -1087,14 +1099,29 @@ namespace SwAgentAddin
                     case "agent.health.check":
                         return HandleHermesHealthCheck(requestId);
 
+                    case "local.material_review.write_properties":
+                    case "local.write_properties":
+                        return await Task.Run(() => HandleLocalMaterialReviewWrite(requestId, envelope)).ConfigureAwait(false);
+
+                    case "local.pdm.status":
+                        return await Task.Run(() => HandlePdmFileStatus(requestId, envelope)).ConfigureAwait(false);
+
+                    case "local.pdm.checkout":
+                        return await Task.Run(() => HandlePdmCheckout(requestId, envelope)).ConfigureAwait(false);
+
+                    case "local.pdm.checkin":
+                        return await Task.Run(() => HandlePdmCheckin(requestId, envelope)).ConfigureAwait(false);
+
+                    case "attribute.rules.load":
+                        return HandleAttributeRulesLoad(requestId);
+
                     default:
-                        // 通过 ActionRouter 路由 AI/Agent 命令
                         if (_actionRouter != null)
                         {
                             try
                             {
-                                string routed = _actionRouter.HandleCommand(commandJson);
-                                WriteTrace("HandleCockpitCommand routed via ActionRouter: " + command);
+                                string routed = await _actionRouter.HandleCommandAsync(commandJson).ConfigureAwait(false);
+                                WriteTrace("HandleCockpitCommandAsync routed via ActionRouter: " + command);
                                 return routed;
                             }
                             catch (Exception routeEx)
@@ -1109,7 +1136,7 @@ namespace SwAgentAddin
             }
             catch (Exception ex)
             {
-                WriteTrace("HandleCockpitCommand error: " + ex);
+                WriteTrace("HandleCockpitCommandAsync error: " + ex);
                 return MakeCockpitResult(null, false, "EXCEPTION", ex.Message);
             }
         }
@@ -1134,7 +1161,8 @@ namespace SwAgentAddin
             if (data != null)
                 result["data"] = data;
 
-            return new JavaScriptSerializer().Serialize(result);
+            var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+            return serializer.Serialize(result);
         }
 
         private string HandleHermesHealthCheck(string requestId)
@@ -1271,6 +1299,255 @@ namespace SwAgentAddin
                         ["checked_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                         ["duration_ms"] = sw.ElapsedMilliseconds
                     });
+            }
+        }
+
+        #endregion
+
+        #region CKP-005-01: Local Material Review + PDM Lifecycle
+
+        private PdmLifecycleHelper _pdmHelper;
+        private PdmComHelper _pdmComHelper;
+        private PdmLifecycleHelper PdmHelper
+        {
+            get { return _pdmHelper ?? (_pdmHelper = new PdmLifecycleHelper(useMock: false)); }
+        }
+        private PdmComHelper PdmCom
+        {
+            get { return _pdmComHelper ?? (_pdmComHelper = new PdmComHelper()); }
+        }
+
+        private string HandleLocalMaterialReviewWrite(string requestId, Dictionary<string, object> envelope)
+        {
+            var payload = envelope != null && envelope.ContainsKey("payload")
+                ? envelope["payload"] as Dictionary<string, object> : new Dictionary<string, object>();
+
+            var results = new List<object>();
+            int successCount = 0, skipCount = 0, failCount = 0;
+
+            var items = payload != null && payload.ContainsKey("items")
+                ? payload["items"] as System.Collections.ArrayList : null;
+            if (items == null || items.Count == 0)
+                return MakeCockpitResult(requestId, false, "NO_ITEMS", "无要写入的项目");
+
+            IModelDoc2 activeDoc = _swApp?.ActiveDoc as IModelDoc2;
+
+            foreach (var itemObj in items)
+            {
+                var item = itemObj as Dictionary<string, object>;
+                if (item == null) { failCount++; continue; }
+                string filePath = Convert.ToString(item.ContainsKey("file_path") ? item["file_path"] : "");
+                string displayName = Convert.ToString(item.ContainsKey("display_name") ? item["display_name"] : "");
+                string decision = Convert.ToString(item.ContainsKey("decision") ? item["decision"] : "skip");
+                var expectedProps = item.ContainsKey("expected_properties")
+                    ? item["expected_properties"] as Dictionary<string, object> : null;
+
+                if (decision == "skip") { skipCount++; continue; }
+                if (decision != "fix" || expectedProps == null) { skipCount++; continue; }
+
+                bool openedForWrite = false;
+                IModelDoc2 targetModel = null;
+                try
+                {
+                    targetModel = ResolveModelForLocalWrite(activeDoc, filePath, out openedForWrite);
+
+                    if (targetModel == null)
+                    {
+                        failCount++;
+                        results.Add(new Dictionary<string, object>
+                        {
+                            ["file_path"] = filePath, ["display_name"] = displayName,
+                            ["success"] = false, ["error"] = "无法打开模型: " + filePath
+                        });
+                        continue;
+                    }
+
+                    CustomPropertyManager mgr = targetModel.Extension.get_CustomPropertyManager("");
+                    if (mgr == null) { failCount++; continue; }
+
+                    foreach (var kv in expectedProps)
+                    {
+                        string key = kv.Key;
+                        string value = Convert.ToString(kv.Value ?? "");
+                        try { mgr.Add3(key, 30, value, 1); } catch { }
+                    }
+
+                    try { targetModel.ForceRebuild3(false); } catch { }
+                    try { targetModel.Save2(true); } catch { }
+
+                    successCount++;
+                    results.Add(new Dictionary<string, object>
+                    {
+                        ["file_path"] = filePath, ["display_name"] = displayName,
+                        ["success"] = true,
+                        ["opened_for_write"] = openedForWrite,
+                        ["properties_written"] = expectedProps.Keys.ToList()
+                    });
+                }
+                catch (Exception ex)
+                {
+                    failCount++;
+                    results.Add(new Dictionary<string, object>
+                    {
+                        ["file_path"] = filePath, ["display_name"] = displayName,
+                        ["success"] = false, ["error"] = ex.Message
+                    });
+                }
+                finally
+                {
+                    if (openedForWrite && targetModel != null)
+                    {
+                        try { _swApp.CloseDoc(targetModel.GetTitle()); } catch { }
+                    }
+                }
+            }
+
+            return MakeCockpitResult(requestId, true, null, null, new Dictionary<string, object>
+            {
+                ["execution_mode"] = "local",
+                ["success_count"] = successCount,
+                ["skip_count"] = skipCount,
+                ["fail_count"] = failCount,
+                ["results"] = results
+            });
+        }
+
+        /// <summary>
+        /// P0-3: 匹配已打开文档，必要时 Silent OpenDoc6 写入后关闭。
+        /// </summary>
+        private IModelDoc2 ResolveModelForLocalWrite(IModelDoc2 activeDoc, string filePath, out bool openedForWrite)
+        {
+            openedForWrite = false;
+            if (string.IsNullOrWhiteSpace(filePath) || _swApp == null) return null;
+
+            if (activeDoc != null
+                && string.Equals(activeDoc.GetPathName() ?? "", filePath, StringComparison.OrdinalIgnoreCase))
+                return activeDoc;
+
+            IModelDoc2 existing = FindOpenModelByPath(filePath);
+            if (existing != null) return existing;
+
+            if (!File.Exists(filePath)) return null;
+
+            int docType = (int)swDocumentTypes_e.swDocPART;
+            string ext = Path.GetExtension(filePath);
+            if (string.Equals(ext, ".SLDASM", StringComparison.OrdinalIgnoreCase))
+                docType = (int)swDocumentTypes_e.swDocASSEMBLY;
+            else if (string.Equals(ext, ".SLDDRW", StringComparison.OrdinalIgnoreCase))
+                docType = (int)swDocumentTypes_e.swDocDRAWING;
+
+            int errors = 0, warnings = 0;
+            var opened = _swApp.OpenDoc6(filePath, docType, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings) as IModelDoc2;
+            if (opened == null) return null;
+            openedForWrite = true;
+            return opened;
+        }
+
+        private IModelDoc2 FindOpenModelByPath(string filePath)
+        {
+            if (_swApp == null || string.IsNullOrWhiteSpace(filePath)) return null;
+
+            try
+            {
+                var byName = _swApp.GetOpenDocumentByName(filePath) as IModelDoc2;
+                if (byName != null && PathsEqual(byName.GetPathName(), filePath)) return byName;
+
+                string fileName = Path.GetFileName(filePath);
+                if (!string.IsNullOrEmpty(fileName))
+                {
+                    byName = _swApp.GetOpenDocumentByName(fileName) as IModelDoc2;
+                    if (byName != null && PathsEqual(byName.GetPathName(), filePath)) return byName;
+                }
+
+                object docsObj = _swApp.GetDocuments();
+                if (docsObj is object[] docs)
+                {
+                    foreach (object docObj in docs)
+                    {
+                        var doc = docObj as IModelDoc2;
+                        if (doc != null && PathsEqual(doc.GetPathName(), filePath))
+                            return doc;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("FindOpenModelByPath failed: " + ex.Message);
+            }
+
+            return null;
+        }
+
+        private static bool PathsEqual(string left, string right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
+            return string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string HandlePdmFileStatus(string requestId, Dictionary<string, object> envelope)
+        {
+            var payload = envelope != null && envelope.ContainsKey("payload")
+                ? envelope["payload"] as Dictionary<string, object> : new Dictionary<string, object>();
+            string filePath = Convert.ToString(payload != null && payload.ContainsKey("file_path") ? payload["file_path"] : "");
+            var result = PdmHelper.GetFileStatus(filePath);
+            result["file_path"] = filePath;
+            return MakeCockpitResult(requestId, true, null, null, result);
+        }
+
+        private string HandlePdmCheckout(string requestId, Dictionary<string, object> envelope)
+        {
+            var payload = envelope != null && envelope.ContainsKey("payload")
+                ? envelope["payload"] as Dictionary<string, object> : new Dictionary<string, object>();
+            string filePath = Convert.ToString(payload != null && payload.ContainsKey("file_path") ? payload["file_path"] : "");
+            string comment = Convert.ToString(payload != null && payload.ContainsKey("comment") ? payload["comment"] : "");
+            var result = PdmHelper.CheckoutFile(filePath, comment);
+            result["file_path"] = filePath;
+            return MakeCockpitResult(requestId, true, null, null, result);
+        }
+
+        private string HandlePdmCheckin(string requestId, Dictionary<string, object> envelope)
+        {
+            var payload = envelope != null && envelope.ContainsKey("payload")
+                ? envelope["payload"] as Dictionary<string, object> : new Dictionary<string, object>();
+            string filePath = Convert.ToString(payload != null && payload.ContainsKey("file_path") ? payload["file_path"] : "");
+            string comment = Convert.ToString(payload != null && payload.ContainsKey("comment") ? payload["comment"] : "");
+            string newVersion = Convert.ToString(payload != null && payload.ContainsKey("new_version") ? payload["new_version"] : "");
+            var result = PdmHelper.CheckinFile(filePath, comment, newVersion);
+            result["file_path"] = filePath;
+            return MakeCockpitResult(requestId, true, null, null, result);
+        }
+
+        // CKP-004-16: Load machine-executable attribute rules for local pre-check.
+        // Reads rules/attribute-review/attribute_rules.generated.json from the addin dir.
+        // Degrades gracefully: missing/corrupt file -> success=false with error code,
+        // so the front-end can fall back to "no local pre-check" without blocking.
+        private string HandleAttributeRulesLoad(string requestId)
+        {
+            try
+            {
+                string rulesPath = Path.Combine(GetAddinDirectory(),
+                    "rules", "attribute-review", "attribute_rules.generated.json");
+                if (!File.Exists(rulesPath))
+                {
+                    WriteTrace("Attribute rules file not found: " + rulesPath);
+                    return MakeCockpitResult(requestId, false, "ERR_RULES_NOT_FOUND",
+                        "attribute_rules.generated.json not found at rules/attribute-review/", null);
+                }
+                string json = File.ReadAllText(rulesPath, Encoding.UTF8);
+                var serializer = new JavaScriptSerializer();
+                var parsed = serializer.DeserializeObject(json) as Dictionary<string, object>;
+                if (parsed == null)
+                {
+                    return MakeCockpitResult(requestId, false, "ERR_RULES_PARSE_FAILED",
+                        "attribute_rules.generated.json is not a JSON object", null);
+                }
+                return MakeCockpitResult(requestId, true, null, null, parsed);
+            }
+            catch (Exception ex)
+            {
+                WriteTrace("Attribute rules load failed: " + ex.Message);
+                return MakeCockpitResult(requestId, false, "ERR_RULES_LOAD_FAILED",
+                    ex.Message, null);
             }
         }
 
@@ -1637,7 +1914,7 @@ namespace SwAgentAddin
                     }
                     else
                     {
-                        ReadAssemblyAllComponents(activeDoc, rows, ref totalCount);
+                        ReadAssemblyAllComponents(activeDoc, rows, ref totalCount, true);
                     }
                 }
 
@@ -1653,29 +1930,90 @@ namespace SwAgentAddin
             }
         }
 
-        private void ReadModelProperties(IModelDoc2 model, string targetName, string localCompName, string filePath, string docType, int quantity, List<PropertyReadRow> rows)
+        private void ReadModelProperties(IModelDoc2 model, string targetName, string localCompName, string filePath, string docType, int quantity, List<PropertyReadRow> rows, string configurationName = null)
+        {
+            string config = string.IsNullOrWhiteSpace(configurationName) ? "(默认)" : configurationName;
+            var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in rows)
+            {
+                if (string.Equals(row.FilePath, filePath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(row.ConfigurationName ?? "(默认)", config, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(row.LocalComponentName ?? "", localCompName ?? "", StringComparison.OrdinalIgnoreCase))
+                    existing.Add(row.PropertyName ?? "");
+            }
+
+            ReadModelPropertiesFromManager(model, targetName, localCompName, filePath, docType, quantity, rows, config, "", existing);
+            if (!string.Equals(config, "(默认)", StringComparison.OrdinalIgnoreCase))
+                ReadModelPropertiesFromManager(model, targetName, localCompName, filePath, docType, quantity, rows, config, config, existing);
+            ReadConfiguredPropertyNamesFromManager(model, targetName, localCompName, filePath, docType, quantity, rows, config, "", existing);
+            if (!string.Equals(config, "(默认)", StringComparison.OrdinalIgnoreCase))
+                ReadConfiguredPropertyNamesFromManager(model, targetName, localCompName, filePath, docType, quantity, rows, config, config, existing);
+        }
+
+        private void ReadConfiguredPropertyNamesFromManager(IModelDoc2 model, string targetName, string localCompName, string filePath, string docType, int quantity, List<PropertyReadRow> rows, string rowConfigName, string managerConfig, HashSet<string> existing)
         {
             try
             {
-                CustomPropertyManager mgr = model.Extension.get_CustomPropertyManager("");
+                CustomPropertyManager mgr = model.Extension.get_CustomPropertyManager(managerConfig ?? "");
+                if (mgr == null) return;
+                var configured = _config?.ReadPropertyNames ?? new List<string>();
+                foreach (var canonical in configured)
+                {
+                    if (string.IsNullOrWhiteSpace(canonical)) continue;
+                    var aliases = new List<string> { canonical };
+                    string[] mapped;
+                    if (PropertyNameAliases.TryGetValue(canonical, out mapped))
+                        aliases.AddRange(mapped);
+                    foreach (var alias in aliases)
+                    {
+                        if (string.IsNullOrWhiteSpace(alias) || existing.Contains(alias)) continue;
+                        string rawVal = "", resolvedVal = "";
+                        bool wasResolved = false, linkToProperty = false;
+                        try { mgr.Get6(alias, false, out rawVal, out resolvedVal, out wasResolved, out linkToProperty); } catch { }
+                        string display = !string.IsNullOrWhiteSpace(resolvedVal) ? resolvedVal : (rawVal ?? "");
+                        if (string.IsNullOrWhiteSpace(display)) continue;
+                        existing.Add(alias);
+                        rows.Add(new PropertyReadRow
+                        {
+                            TargetName = targetName, LocalComponentName = localCompName,
+                            FilePath = filePath, ConfigurationName = rowConfigName ?? "(默认)",
+                            PropertyName = alias, RawValue = rawVal ?? "",
+                            ResolvedValue = resolvedVal ?? rawVal ?? "", Source = docType, Quantity = quantity
+                        });
+                    }
+                }
+            }
+            catch (Exception ex) { WriteTrace("ReadConfiguredPropertyNamesFromManager failed: " + ex.Message); }
+        }
+
+        private void ReadModelPropertiesFromManager(IModelDoc2 model, string targetName, string localCompName, string filePath, string docType, int quantity, List<PropertyReadRow> rows, string rowConfigName, string managerConfig, HashSet<string> existing)
+        {
+            try
+            {
+                CustomPropertyManager mgr = model.Extension.get_CustomPropertyManager(managerConfig ?? "");
                 if (mgr == null) return;
                 object propNames = mgr.GetNames();
                 if (propNames == null) return;
-                string[] names = (string[])propNames;
+                string[] names = propNames as string[];
+                if (names == null) return;
                 foreach (string name in names)
                 {
-                    string rawVal = ""; string resolvedVal = "";
-                    try { mgr.Get2(name, out rawVal, out resolvedVal); } catch { }
+                    if (string.IsNullOrWhiteSpace(name) || existing.Contains(name)) continue;
+                    string rawVal = "", resolvedVal = "";
+                    bool wasResolved = false, linkToProperty = false;
+                    try { mgr.Get6(name, false, out rawVal, out resolvedVal, out wasResolved, out linkToProperty); } catch { }
+                    existing.Add(name);
                     rows.Add(new PropertyReadRow
                     {
                         TargetName = targetName, LocalComponentName = localCompName,
-                        FilePath = filePath, ConfigurationName = "(默认)",
+                        FilePath = filePath, ConfigurationName = rowConfigName ?? "(默认)",
                         PropertyName = name, RawValue = rawVal ?? "",
-                        ResolvedValue = resolvedVal ?? "", Source = docType, Quantity = quantity
+                        ResolvedValue = !string.IsNullOrWhiteSpace(resolvedVal) ? resolvedVal : (rawVal ?? ""),
+                        Source = docType, Quantity = quantity
                     });
                 }
             }
-            catch (Exception ex) { WriteTrace("ReadModelProperties failed: " + ex.Message); }
+            catch (Exception ex) { WriteTrace("ReadModelPropertiesFromManager failed: " + ex.Message); }
         }
 
         private void ReadDrawingProperties(IModelDoc2 drawingDoc, List<PropertyReadRow> rows, ref int totalCount)
@@ -1699,10 +2037,14 @@ namespace SwAgentAddin
             catch (Exception ex) { WriteTrace("ReadDrawingProperties failed: " + ex); SafeMessage("读取工程图属性失败：" + ex.Message, MessageBoxIcon.Error); }
         }
 
-        private void ReadAssemblyAllComponents(IModelDoc2 asmDoc, List<PropertyReadRow> rows, ref int totalCount)
+        private void ReadAssemblyAllComponents(IModelDoc2 asmDoc, List<PropertyReadRow> rows, ref int totalCount, bool resolveLightweightForRead)
         {
+            bool resolvedLightweight = false;
             try
             {
+                if (resolveLightweightForRead)
+                    resolvedLightweight = TryResolveAssemblyLightweightForRead(asmDoc);
+
                 IAssemblyDoc asm = asmDoc as IAssemblyDoc;
                 if (asm == null) return;
                 object compObjs = asm.GetComponents(false);
@@ -1711,16 +2053,16 @@ namespace SwAgentAddin
                 if (comps == null) return;
                 var groups = new Dictionary<string, List<IComponent2>>(StringComparer.OrdinalIgnoreCase);
                 int suppressedCount = 0;
+                int skippedNoModel = 0;
                 foreach (object c in comps)
                 {
                     IComponent2 comp = c as IComponent2;
                     if (comp == null) continue;
-                    try { if (comp.GetSuppression() == (int)swComponentSuppressionState_e.swComponentSuppressed) { suppressedCount++; continue; } } catch { }
-                    IModelDoc2 compModel = null;
-                    try { compModel = (IModelDoc2)comp.GetModelDoc2(); } catch { }
-                    if (compModel == null) continue;
-                    string compPath = compModel.GetPathName();
-                    if (string.IsNullOrWhiteSpace(compPath)) continue;
+                    if (SafeIsSuppressed(comp)) suppressedCount++;
+
+                    string compPath = SafeGetComponentFilePath(comp);
+                    if (string.IsNullOrWhiteSpace(compPath) || compPath == "不可用")
+                        continue;
                     if (!groups.ContainsKey(compPath)) groups[compPath] = new List<IComponent2>();
                     groups[compPath].Add(comp);
                 }
@@ -1728,16 +2070,37 @@ namespace SwAgentAddin
                 foreach (var kv in groups)
                 {
                     IComponent2 firstComp = kv.Value[0];
-                    IModelDoc2 model = null;
-                    try { model = (IModelDoc2)firstComp.GetModelDoc2(); } catch { }
-                    if (model == null) continue;
+                    IModelDoc2 model = TryGetComponentModelDoc(firstComp, kv.Key);
+                    if (model == null)
+                    {
+                        skippedNoModel++;
+                        continue;
+                    }
                     string compName = firstComp.Name2 ?? model.GetTitle();
                     string docType = GetDocTypeName(model.GetType());
-                    ReadModelProperties(model, compName, compName, kv.Key, docType, kv.Value.Count, rows);
+                    if (string.IsNullOrWhiteSpace(docType) || docType == "unknown")
+                        docType = GuessDocTypeNameFromPath(kv.Key);
+                    string config = "(默认)";
+                    try
+                    {
+                        string refCfg = firstComp.ReferencedConfiguration;
+                        if (!string.IsNullOrWhiteSpace(refCfg)) config = refCfg;
+                    }
+                    catch { }
+                    ReadModelProperties(model, compName, compName, kv.Key, docType, kv.Value.Count, rows, config);
                 }
-                if (suppressedCount > 0) WriteTrace("跳过 " + suppressedCount + " 个被抑制的组件。");
+                if (suppressedCount > 0) WriteTrace("ReadAssemblyAllComponents: 含 " + suppressedCount + " 个压缩组件。");
+                if (skippedNoModel > 0 && !resolveLightweightForRead)
+                    WriteTrace("ReadAssemblyAllComponents: " + skippedNoModel + " 个组件属性未加载（轻化/未解析），路径仍可用；点「读取属性」可解析轻化件。");
+                else if (skippedNoModel > 0)
+                    WriteTrace("ReadAssemblyAllComponents: " + skippedNoModel + " 个组件仍无法读取属性。");
             }
             catch (Exception ex) { WriteTrace("ReadAssemblyAllComponents failed: " + ex); }
+            finally
+            {
+                if (resolvedLightweight)
+                    TryRestoreAssemblyLightweight(asmDoc);
+            }
         }
 
         private void ShowPropertyReadForm(List<PropertyReadRow> rows, string docType, int targetCount, string currentFileName)
@@ -2169,8 +2532,9 @@ namespace SwAgentAddin
 
         private string GetCompFilePathKey(IComponent2 comp)
         {
-            try { IModelDoc2 m = (IModelDoc2)comp.GetModelDoc2(); if (m != null) return m.GetPathName() ?? comp.Name2 ?? ""; } catch { }
-            return comp.Name2 ?? "";
+            string path = SafeGetComponentFilePath(comp);
+            if (!string.IsNullOrWhiteSpace(path) && path != "不可用") return path;
+            return comp?.Name2 ?? "";
         }
 
         // Fallback flat tree
@@ -2474,6 +2838,137 @@ namespace SwAgentAddin
         catch { return "不可用"; }
     }
 
+    /// <summary>
+    /// 组件文件路径：轻化/压缩时 GetModelDoc2 可能为 null，但 IComponent2.GetPathName 仍返回 as-saved 路径。
+    /// </summary>
+    private static string SafeGetComponentFilePath(IComponent2 comp)
+    {
+        if (comp == null) return "不可用";
+        try
+        {
+            var model = comp.GetModelDoc2() as IModelDoc2;
+            if (model != null)
+            {
+                string p = model.GetPathName();
+                if (!string.IsNullOrWhiteSpace(p)) return p;
+            }
+        }
+        catch { }
+
+        try
+        {
+            string p = comp.GetPathName();
+            if (!string.IsNullOrWhiteSpace(p)) return p;
+        }
+        catch { }
+
+        return "不可用";
+    }
+
+    private static string GuessDocTypeNameFromPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "part";
+        string ext = Path.GetExtension(path);
+        if (string.Equals(ext, ".SLDASM", StringComparison.OrdinalIgnoreCase)) return "assembly";
+        if (string.Equals(ext, ".SLDDRW", StringComparison.OrdinalIgnoreCase)) return "drawing";
+        return "part";
+    }
+
+    private static int GuessSwDocTypeFromPath(string path)
+    {
+        string ext = Path.GetExtension(path ?? "");
+        if (string.Equals(ext, ".SLDASM", StringComparison.OrdinalIgnoreCase)) return (int)swDocumentTypes_e.swDocASSEMBLY;
+        if (string.Equals(ext, ".SLDDRW", StringComparison.OrdinalIgnoreCase)) return (int)swDocumentTypes_e.swDocDRAWING;
+        return (int)swDocumentTypes_e.swDocPART;
+    }
+
+    /// <summary>
+    /// 仅使用已加载/已打开的模型，禁止 OpenDoc6（避免打开 Cockpit 时逐个弹出零件窗口）。
+    /// </summary>
+    private IModelDoc2 TryGetComponentModelDoc(IComponent2 comp, string compPath)
+    {
+        if (comp == null) return null;
+        try
+        {
+            var loaded = comp.GetModelDoc2() as IModelDoc2;
+            if (loaded != null) return loaded;
+        }
+        catch { }
+
+        if (!string.IsNullOrWhiteSpace(compPath) && compPath != "不可用")
+            return FindOpenModelByPath(compPath);
+        return null;
+    }
+
+    /// <summary>
+    /// 仅在用户点击「读取属性」时：装配体内静默 Resolve 轻化件（不 OpenDoc6 逐个开文件）。
+    /// </summary>
+    private bool TryResolveAssemblyLightweightForRead(IModelDoc2 asmDoc)
+    {
+        _lightweightComponentsToRestore = null;
+        try
+        {
+            IAssemblyDoc asm = asmDoc as IAssemblyDoc;
+            if (asm == null) return false;
+
+            var lightweightComps = new List<IComponent2>();
+            object compObjs = asm.GetComponents(false);
+            object[] comps = compObjs as object[];
+            if (comps != null)
+            {
+                foreach (object c in comps)
+                {
+                    IComponent2 comp = c as IComponent2;
+                    if (comp != null && SafeIsLightweight(comp))
+                        lightweightComps.Add(comp);
+                }
+            }
+            if (lightweightComps.Count == 0) return false;
+
+            _lightweightComponentsToRestore = lightweightComps;
+            try { _swApp?.ActivateDoc3(asmDoc.GetTitle(), false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, 0); } catch { }
+
+            int status = asm.ResolveAllLightWeightComponents(false);
+            WriteTrace("ResolveAllLightWeightComponents(false) status=" + status + ", count=" + lightweightComps.Count);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            WriteTrace("TryResolveAssemblyLightweightForRead failed: " + ex.Message);
+            _lightweightComponentsToRestore = null;
+            return false;
+        }
+    }
+
+    private void TryRestoreAssemblyLightweight(IModelDoc2 asmDoc)
+    {
+        if (_lightweightComponentsToRestore == null || _lightweightComponentsToRestore.Count == 0)
+        {
+            _lightweightComponentsToRestore = null;
+            return;
+        }
+        try
+        {
+            foreach (IComponent2 comp in _lightweightComponentsToRestore)
+            {
+                try
+                {
+                    comp.SetSuppression2((int)swComponentSuppressionState_e.swComponentLightweight);
+                }
+                catch { }
+            }
+            WriteTrace("Restored " + _lightweightComponentsToRestore.Count + " components to lightweight.");
+        }
+        catch (Exception ex)
+        {
+            WriteTrace("TryRestoreAssemblyLightweight failed: " + ex.Message);
+        }
+        finally
+        {
+            _lightweightComponentsToRestore = null;
+        }
+    }
+
     private static string SafeGetFileSize(string filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath) || filePath == "不可用")
@@ -2514,18 +3009,63 @@ namespace SwAgentAddin
         catch { return false; }
     }
 
-    private static string SafeCompFileKey(IComponent2 comp)
+    // CKP-004-20: 新增筛选辅助方法（COM 属性/方法兼容处理）
+    private static bool SafeIsHidden(IComponent2 comp)
     {
         try
         {
-            IModelDoc2 m = (IModelDoc2)comp.GetModelDoc2();
-            if (m != null)
-            {
-                string path = m.GetPathName();
-                if (!string.IsNullOrEmpty(path)) return path;
-            }
+            if (comp == null) return false;
+            var h = comp.IsHidden(false);
+            return h != null && (bool)h;
         }
-        catch { }
+        catch { return false; }
+    }
+
+    private static bool SafeIsEnvelope(IComponent2 comp)
+    {
+        try
+        {
+            if (comp == null) return false;
+            dynamic dc = comp;
+            try { return dc.IsEnvelope; } catch { }
+            try { return dc.IsEnvelope(); } catch { }
+            return false;
+        }
+        catch { return false; }
+    }
+
+    private static bool SafeIsVirtual(IComponent2 comp)
+    {
+        try
+        {
+            if (comp == null) return false;
+            dynamic dc = comp;
+            try { return dc.IsVirtual; } catch { }
+            try { return dc.IsVirtual(); } catch { }
+            return false;
+        }
+        catch { return false; }
+    }
+
+    private static bool SafeIsReadOnly(IComponent2 comp, string filePath)
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(filePath))
+            {
+                var fi = new System.IO.FileInfo(filePath);
+                // PDM 管理下文件默认只读（退出 PDM 或本地文件视为非只读）
+                return fi.Exists;
+            }
+            return false;
+        }
+        catch { return false; }
+    }
+
+    private static string SafeCompFileKey(IComponent2 comp)
+    {
+        string path = SafeGetComponentFilePath(comp);
+        if (!string.IsNullOrEmpty(path) && path != "不可用") return path;
         return comp?.Name2 ?? Guid.NewGuid().ToString();
     }
 
@@ -2783,7 +3323,20 @@ namespace SwAgentAddin
             {
                 totalCount = 1;
                 string fp = activeDoc.GetPathName() ?? "";
-                ReadModelProperties(activeDoc, activeDoc.GetTitle(), "", fp, "part", 1, rows);
+                string title = activeDoc.GetTitle() ?? "";
+                string config = "(默认)";
+                try
+                {
+                    IConfigurationManager cfgMgr = activeDoc.ConfigurationManager;
+                    if (cfgMgr != null)
+                    {
+                        IConfiguration activeCfg = cfgMgr.ActiveConfiguration;
+                        if (activeCfg != null && !string.IsNullOrWhiteSpace(activeCfg.Name))
+                            config = activeCfg.Name;
+                    }
+                }
+                catch { }
+                ReadModelProperties(activeDoc, title, title, fp, "part", 1, rows, config);
             }
             else if (isDrawing)
             {
@@ -2814,13 +3367,15 @@ namespace SwAgentAddin
                                 {
                                     IComponent2 comp = c as IComponent2;
                                     if (comp == null) continue;
-                                    if (SafeIsSuppressed(comp)) { suppressedCount++; continue; }
-                                    if (SafeIsLightweight(comp)) { lightweightCount++; continue; }
+                                    if (SafeIsSuppressed(comp)) { suppressedCount++; }
+                                    if (SafeIsLightweight(comp)) { lightweightCount++; }
                                 }
                             }
                         }
                     }
-                    ReadAssemblyAllComponents(activeDoc, rows, ref totalCount);
+                    bool resolveLw = _resolveLightweightForPropertyRead;
+                    ReadAssemblyAllComponents(activeDoc, rows, ref totalCount, resolveLw);
+                    _resolveLightweightForPropertyRead = false;
                 }
                 catch (Exception ex)
                 {
@@ -2830,6 +3385,17 @@ namespace SwAgentAddin
 
             // ── 属性表 ──
             context.PropertyTable = BuildCockpitPropertyTable(rows, context.ActiveDocument.Title, warnings);
+            EnrichPdmVaultFlags(context.PropertyTable);
+            EnrichPdmWorkflowStateProperties(context.PropertyTable, warnings);
+            int propsRowCount = 0;
+            if (context.PropertyTable?.Rows != null)
+            {
+                foreach (var pr in context.PropertyTable.Rows)
+                    if (pr.ResolvedProperties != null && pr.ResolvedProperties.Count > 0) propsRowCount++;
+            }
+            WriteTrace(string.Format(
+                "BuildCockpitContext properties: rawRows={0} pivotRows={1} rowsWithProps={2}",
+                rows.Count, context.PropertyTable?.Rows?.Count ?? 0, propsRowCount));
 
             // ── 装配树 ──
             if (isAssembly)
@@ -2971,13 +3537,18 @@ namespace SwAgentAddin
                         continue;
                     }
 
-                    IModelDoc2 compModel = null;
-                    try { compModel = (IModelDoc2)comp.GetModelDoc2(); } catch { }
-
-                    string compPath = SafeGetFilePath(compModel);
+                    string compPath = SafeGetComponentFilePath(comp);
                     string compName = comp.Name2 ?? "";
                     string displayName = CleanComponentDisplayName(compName);
-                    string docType = compModel != null ? GetDocTypeName(compModel.GetType()) : "";
+                    string docType = "";
+                    try
+                    {
+                        IModelDoc2 compModel = comp.GetModelDoc2() as IModelDoc2;
+                        if (compModel != null) docType = GetDocTypeName(compModel.GetType());
+                    }
+                    catch { }
+                    if (string.IsNullOrWhiteSpace(docType) && compPath != "不可用")
+                        docType = GuessDocTypeNameFromPath(compPath);
                     string cfg = "";
                     try { cfg = comp.ReferencedConfiguration ?? ""; } catch { }
                     if (string.IsNullOrEmpty(cfg)) cfg = "(默认)";
@@ -3053,8 +3624,8 @@ namespace SwAgentAddin
                 IComponent2 comp = c as IComponent2;
                 if (comp == null) continue;
 
-                if (SafeIsSuppressed(comp)) { skippedSuppressed++; continue; }
-                if (SafeIsLightweight(comp)) { skippedLightweight++; continue; }
+                if (SafeIsSuppressed(comp)) { skippedSuppressed++; }
+                if (SafeIsLightweight(comp)) { skippedLightweight++; }
 
                 IComponent2 parent = null;
                 try { parent = (IComponent2)comp.GetParent(); } catch { }
@@ -3065,9 +3636,9 @@ namespace SwAgentAddin
             }
 
             if (skippedSuppressed > 0)
-                warnings.Add(new CockpitWarning { Level = "info", Target = "assembly_tree", Message = string.Format("跳过 {0} 个被抑制的组件", skippedSuppressed) });
+                warnings.Add(new CockpitWarning { Level = "info", Target = "assembly_tree", Message = string.Format("含 {0} 个压缩组件", skippedSuppressed) });
             if (skippedLightweight > 0)
-                warnings.Add(new CockpitWarning { Level = "info", Target = "assembly_tree", Message = string.Format("跳过 {0} 个轻化的组件", skippedLightweight) });
+                warnings.Add(new CockpitWarning { Level = "info", Target = "assembly_tree", Message = string.Format("含 {0} 个轻化组件（已解析路径）", skippedLightweight) });
 
             // Recursive node builder
             Func<IComponent2, string, int, string, CockpitTreeNode> buildNode = null;
@@ -3081,19 +3652,22 @@ namespace SwAgentAddin
                 try { compName = comp.Name2 ?? ""; } catch { }
                 string displayName = CleanComponentDisplayName(compName);
 
-                string compPath = "不可用";
+                string compPath = SafeGetComponentFilePath(comp);
                 string docType = "";
                 bool isAssemblyComp = false;
                 try
                 {
-                    IModelDoc2 cm = (IModelDoc2)comp.GetModelDoc2();
+                    IModelDoc2 cm = comp.GetModelDoc2() as IModelDoc2;
                     if (cm != null)
                     {
-                        string p = cm.GetPathName();
-                        if (!string.IsNullOrEmpty(p)) compPath = p;
                         int dt = cm.GetType();
                         docType = GetDocTypeName(dt);
                         isAssemblyComp = (swDocumentTypes_e)dt == swDocumentTypes_e.swDocASSEMBLY;
+                    }
+                    else if (compPath != "不可用")
+                    {
+                        docType = GuessDocTypeNameFromPath(compPath);
+                        isAssemblyComp = docType == "assembly";
                     }
                 }
                 catch { }
@@ -3111,6 +3685,12 @@ namespace SwAgentAddin
                 bool isPart = docType == "part";
                 bool isSuppressed = SafeIsSuppressed(comp);
                 bool isLightweight = SafeIsLightweight(comp);
+                // CKP-004-20: 新增筛选字段
+                bool isHidden = SafeIsHidden(comp);
+                bool isEnvelope = SafeIsEnvelope(comp);
+                bool isVirtual = SafeIsVirtual(comp);
+                bool isReadOnly = SafeIsReadOnly(comp, compPath);
+                bool isInPdmVault = PdmCom.IsFileInVault(compPath);
 
                 var node = new CockpitTreeNode
                 {
@@ -3133,6 +3713,11 @@ namespace SwAgentAddin
                     IsPart = isPart,
                     IsSuppressed = isSuppressed,
                     IsLightweight = isLightweight,
+                    IsHidden = isHidden,
+                    IsEnvelope = isEnvelope,
+                    IsVirtual = isVirtual,
+                    IsReadOnly = isReadOnly,
+                    IsInPdmVault = isInPdmVault,
                     Children = new List<CockpitTreeNode>()
                 };
 
@@ -3190,8 +3775,13 @@ namespace SwAgentAddin
     {
         try
         {
-            // Determine which property names to include (config-driven)
-            var configuredProps = _config?.ReadPropertyNames ?? new List<string>();
+            // Determine which property names to include (config-driven + defaults)
+            var configuredProps = new List<string>(_config?.ReadPropertyNames ?? new List<string>());
+            foreach (var name in DefaultReadPropertyNames)
+            {
+                if (!configuredProps.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    configuredProps.Add(name);
+            }
             bool showAll = _config?.ReadShowAllProperties ?? false;
             var intrinsicSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { "文档类型", "装配体名称", "图纸名称" };
@@ -3224,24 +3814,47 @@ namespace SwAgentAddin
                 }
                 totalInstances += row.Quantity;
 
-                // Property filtering
+                // Property filtering + alias normalization (W物料名称 → 物料名称)
                 string propName = row.PropertyName ?? "";
-                bool include = showAll;
-                if (!include && configuredProps.Count > 0)
-                {
-                    // configuredProps first, then fallback to intrinsic
-                    include = configuredProps.Contains(propName, StringComparer.OrdinalIgnoreCase) || intrinsicSet.Contains(propName);
-                }
-                if (!include) include = true; // showAll by default when configuredProps is empty
+                if (string.Equals(propName, PdmWorkflowStatePropertyName, StringComparison.OrdinalIgnoreCase))
+                    continue;
 
-                if (include && !crow.Properties.ContainsKey(propName))
+                string canonicalName = ResolveConfiguredPropertyName(propName, configuredProps);
+                bool include = showAll;
+                if (!include)
                 {
-                    crow.Properties[propName] = new CockpitPropertyValue
+                    if (configuredProps.Count == 0)
+                        include = true;
+                    else
+                        include = canonicalName != null || intrinsicSet.Contains(propName);
+                }
+                if (!include) continue;
+
+                string storeKey = canonicalName ?? propName;
+                string resolvedDisplay = !string.IsNullOrWhiteSpace(row.ResolvedValue) ? row.ResolvedValue : (row.RawValue ?? "");
+                if (!crow.Properties.ContainsKey(storeKey))
+                {
+                    crow.Properties[storeKey] = new CockpitPropertyValue
                     {
                         RawValue = row.RawValue ?? "",
-                        ResolvedValue = row.ResolvedValue ?? "",
+                        ResolvedValue = resolvedDisplay,
                         Type = 30  // swCustomInfoText
                     };
+                }
+                else if (!string.IsNullOrWhiteSpace(resolvedDisplay))
+                {
+                    var existing = crow.Properties[storeKey];
+                    if (string.IsNullOrWhiteSpace(existing.ResolvedValue) && string.IsNullOrWhiteSpace(existing.RawValue))
+                    {
+                        existing.RawValue = row.RawValue ?? "";
+                        existing.ResolvedValue = resolvedDisplay;
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(resolvedDisplay))
+                {
+                    if (crow.ResolvedProperties == null)
+                        crow.ResolvedProperties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    crow.ResolvedProperties[storeKey] = resolvedDisplay;
                 }
             }
 
@@ -3266,6 +3879,120 @@ namespace SwAgentAddin
             warnings.Add(new CockpitWarning { Level = "error", Target = "property_table", Message = "属性表构建失败: " + ex.Message });
             WriteTrace("BuildCockpitPropertyTable failed: " + ex.ToString());
             return new CockpitPropertyTable { TargetLabel = "(error)" };
+        }
+    }
+
+    private const string PdmWorkflowStatePropertyName = "物料状态";
+
+    private static readonly string[] DefaultReadPropertyNames =
+    {
+        "物料编码", "物料名称", "规格型号", "材质", "表面处理", "设计人", "物料状态"
+    };
+
+    private static readonly Dictionary<string, string[]> PropertyNameAliases =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["物料编码"] = new[] { "物料编码", "W物料编码", "FileBM", "物料代码", "编码", "PartNumber", "零件号", "MaterialCode" },
+            ["物料名称"] = new[] { "物料名称", "W物料名称", "名称", "Description", "PartName", "零件名称" },
+            ["规格型号"] = new[] { "规格型号", "G规格型号", "规格", "型号", "Specification", "Model" },
+            ["材质"] = new[] { "材质", "C材质", "材料", "Material", "C材料", "C_Material" },
+            ["表面处理"] = new[] { "表面处理", "SurfaceTreatment", "表面處理", "Finish", "Coating" },
+            ["设计人"] = new[] { "设计人", "设计", "Designer", "设计人员", "设计者", "DesignedBy", "Author", "创建者" },
+            ["物料状态"] = new[] { "物料状态" }
+        };
+
+    private static string ResolveConfiguredPropertyName(string swPropName, List<string> configuredProps)
+    {
+        if (string.IsNullOrWhiteSpace(swPropName) || configuredProps == null || configuredProps.Count == 0)
+            return null;
+        foreach (var canonical in configuredProps)
+        {
+            if (string.Equals(canonical, swPropName, StringComparison.OrdinalIgnoreCase))
+                return canonical;
+        }
+        foreach (var canonical in configuredProps)
+        {
+            string[] aliases;
+            if (!PropertyNameAliases.TryGetValue(canonical, out aliases)) continue;
+            foreach (var alias in aliases)
+            {
+                if (string.Equals(alias, swPropName, StringComparison.OrdinalIgnoreCase))
+                    return canonical;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 标记属性行是否由 PDM Vault 管理（供设计树/扁平视图图标着色）。
+    /// </summary>
+    private void EnrichPdmVaultFlags(CockpitPropertyTable table)
+    {
+        if (table?.Rows == null || table.Rows.Count == 0) return;
+
+        foreach (var row in table.Rows)
+        {
+            string fp = row.FilePath ?? "";
+            row.IsInPdmVault = !string.IsNullOrWhiteSpace(fp) && fp != "不可用" && PdmCom.IsFileInVault(fp);
+        }
+    }
+
+    /// <summary>
+    /// 当 read_property_names 包含「物料状态」时，从 PDM 工作流注入当前状态（非 SW 自定义属性）。
+    /// </summary>
+    private void EnrichPdmWorkflowStateProperties(CockpitPropertyTable table, List<CockpitWarning> warnings)
+    {
+        try
+        {
+            var configuredProps = new List<string>(_config?.ReadPropertyNames ?? new List<string>());
+            foreach (var name in DefaultReadPropertyNames)
+            {
+                if (!configuredProps.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    configuredProps.Add(name);
+            }
+            if (!configuredProps.Any(p => string.Equals(p, PdmWorkflowStatePropertyName, StringComparison.OrdinalIgnoreCase)))
+                return;
+            if (table?.Rows == null || table.Rows.Count == 0) return;
+
+            var cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in table.Rows)
+            {
+                string fp = row.FilePath ?? "";
+                if (string.IsNullOrWhiteSpace(fp) || fp == "不可用") continue;
+
+                string stateName;
+                if (!cache.TryGetValue(fp, out stateName))
+                {
+                    stateName = PdmCom.GetWorkflowStateName(fp) ?? "";
+                    cache[fp] = stateName;
+                }
+
+                row.Properties[PdmWorkflowStatePropertyName] = new CockpitPropertyValue
+                {
+                    RawValue = stateName ?? "",
+                    ResolvedValue = stateName ?? "",
+                    Type = 30
+                };
+                if (row.ResolvedProperties == null)
+                    row.ResolvedProperties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                row.ResolvedProperties[PdmWorkflowStatePropertyName] = stateName ?? "";
+            }
+
+            if (table.DynamicColumns == null)
+                table.DynamicColumns = new List<string>();
+            if (!table.DynamicColumns.Any(c => string.Equals(c, PdmWorkflowStatePropertyName, StringComparison.OrdinalIgnoreCase)))
+                table.DynamicColumns.Add(PdmWorkflowStatePropertyName);
+            table.DynamicColumns = table.DynamicColumns.OrderBy(c => c, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+        catch (Exception ex)
+        {
+            warnings.Add(new CockpitWarning
+            {
+                Level = "warn",
+                Target = "pdm_workflow_state",
+                Message = "PDM 物料状态注入失败: " + ex.Message
+            });
+            WriteTrace("EnrichPdmWorkflowStateProperties failed: " + ex.ToString());
         }
     }
 
@@ -3316,7 +4043,8 @@ namespace SwAgentAddin
                 ["score_threshold"] = hindsight.ScoreThreshold,
                 ["timeout_seconds"] = hindsight.TimeoutSeconds,
                 ["explain_with_hermes"] = hindsight.ExplainWithHermes
-            }
+            },
+            ["read_property_names"] = _config?.ReadPropertyNames ?? new List<string>()
         };
     }
 
@@ -3566,7 +4294,7 @@ namespace SwAgentAddin
     {
         private readonly AddinConfig _config;
         private readonly Func<string> _buildContext;
-        private readonly Func<string, string> _handleCommand;
+        private readonly Func<string, Task<string>> _handleCommandAsync;
         private WebView2 _webView;
         private Rectangle _normalBounds = Rectangle.Empty;
         private Rectangle _customMaxBounds = Rectangle.Empty;
@@ -3580,11 +4308,11 @@ namespace SwAgentAddin
         [DllImport("user32.dll")]
         private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
-        public CockpitForm(AddinConfig config, Func<string> buildContext, Func<string, string> handleCommand)
+        public CockpitForm(AddinConfig config, Func<string> buildContext, Func<string, Task<string>> handleCommandAsync)
         {
             _config = config;
             _buildContext = buildContext;
-            _handleCommand = handleCommand;
+            _handleCommandAsync = handleCommandAsync;
 
             Text = "MechPilot Agent驾驶舱";
             FormBorderStyle = FormBorderStyle.None;
@@ -3727,14 +4455,9 @@ namespace SwAgentAddin
 
             try
             {
-                // C# → JS: inject initial context
+                // C# → JS: inject initial context (Base64 avoids ExecuteScript JSON/Unicode escaping issues)
                 string contextJson = _buildContext?.Invoke() ?? "{}";
-                string script = "if (window.MechPilot && window.MechPilot.receiveContext) { window.MechPilot.receiveContext(" + contextJson + "); }";
-                _webView.CoreWebView2.ExecuteScriptAsync(script).ContinueWith(task =>
-                {
-                    if (task.IsFaulted && task.Exception != null)
-                        SwAgentAddin.WriteTrace("CockpitForm: context injection script failed: " + task.Exception.GetBaseException().Message);
-                });
+                InjectContextToWebView(contextJson);
                 SwAgentAddin.WriteTrace("CockpitForm: context injected (" + contextJson.Length + " chars)");
                 TryNavigatePendingPage();
             }
@@ -3781,8 +4504,7 @@ namespace SwAgentAddin
 
             try
             {
-                string script = "if (window.MechPilot && window.MechPilot.receiveContext) { window.MechPilot.receiveContext(" + contextJson + "); }";
-                _webView.CoreWebView2.ExecuteScriptAsync(script);
+                InjectContextToWebView(contextJson);
                 SwAgentAddin.WriteTrace("CockpitForm: pushed refreshed context (" + contextJson.Length + " chars)");
             }
             catch (Exception ex)
@@ -3791,7 +4513,25 @@ namespace SwAgentAddin
             }
         }
 
-        private void OnWebMessageReceived(object sender, Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs e)
+        /// <summary>
+        /// Inject CockpitContext into WebView2 via Base64-wrapped JSON (same strategy as receiveResult).
+        /// </summary>
+        private void InjectContextToWebView(string contextJson)
+        {
+            if (_webView?.CoreWebView2 == null || string.IsNullOrEmpty(contextJson)) return;
+            string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(contextJson));
+            string script =
+                "if (window.MechPilot && window.MechPilot.decodeBase64Utf8Json && window.MechPilot.receiveContext) { " +
+                "try { window.MechPilot.receiveContext(window.MechPilot.decodeBase64Utf8Json('" + b64 + "')); } " +
+                "catch(e) { console.error('[MechPilot] receiveContext failed', e); } }";
+            _webView.CoreWebView2.ExecuteScriptAsync(script).ContinueWith(task =>
+            {
+                if (task.IsFaulted && task.Exception != null)
+                    SwAgentAddin.WriteTrace("CockpitForm: context injection script failed: " + task.Exception.GetBaseException().Message);
+            });
+        }
+
+        private async void OnWebMessageReceived(object sender, Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs e)
         {
             try
             {
@@ -3824,19 +4564,23 @@ namespace SwAgentAddin
                     TopMost = !TopMost;
                     string pinResult = "{\"request_id\":\"" + ExtractRequestId(message) + "\",\"success\":true,\"data\":{\"pinned\":" + (TopMost ? "true" : "false") + ",\"topmost\":" + (TopMost ? "true" : "false") + "}}";
                     string pinScript = "if (window.MechPilot && window.MechPilot.receiveResult) { window.MechPilot.receiveResult(" + EscapeForJsInjection(pinResult) + "); }";
-                    _webView.CoreWebView2.ExecuteScriptAsync(pinScript);
+                    await _webView.CoreWebView2.ExecuteScriptAsync(pinScript).ConfigureAwait(true);
                     SwAgentAddin.WriteTrace("CockpitForm: window_pin_toggle -> TopMost=" + TopMost);
                     return;
                 }
 
-                // Dispatch other commands to handler
-                string result = _handleCommand?.Invoke(message);
+                // Dispatch other commands without blocking the WebView2 message pump
+                if (_handleCommandAsync == null) return;
+                string result = await _handleCommandAsync(message).ConfigureAwait(true);
                 if (!string.IsNullOrEmpty(result))
                 {
-                    // Send result back to JS
-                    string escaped = EscapeForJsInjection(result);
-                    string script = "if (window.MechPilot && window.MechPilot.receiveResult) { window.MechPilot.receiveResult('" + escaped + "'); }";
-                    _webView.CoreWebView2.ExecuteScriptAsync(script);
+                    // Base64 avoids ExecuteScript JSON escaping issues on large Hermes payloads
+                    string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(result));
+                    string script =
+                        "if (window.MechPilot && window.MechPilot.decodeBase64Utf8Json && window.MechPilot.receiveResult) { " +
+                        "try { window.MechPilot.receiveResult(window.MechPilot.decodeBase64Utf8Json('" + b64 + "')); } " +
+                        "catch(e) { console.error('[MechPilot] receiveResult failed', e); } }";
+                    await _webView.CoreWebView2.ExecuteScriptAsync(script).ConfigureAwait(true);
                 }
             }
             catch (Exception ex)
@@ -4105,8 +4849,7 @@ namespace SwAgentAddin
         // Read properties display (Agent F)
         public List<string> ReadPropertyNames { get; set; } = new List<string>
         {
-            "物料名称", "图号", "材料", "重量", "表面处理", "处理状态", "处理人", "处理日期",
-            "装配体名称", "图纸名称", "文档类型"
+            "物料编码", "物料名称", "规格型号", "材质", "表面处理", "设计人", "物料状态"
         };
         public bool ReadShowAllProperties { get; set; } = false;
         public bool ReadShowRawValueDefault { get; set; } = false;
@@ -4433,6 +5176,12 @@ namespace SwAgentAddin
         public bool IsPart { get; set; }
         public bool IsSuppressed { get; set; }
         public bool IsLightweight { get; set; }
+        // CKP-004-20: 6 筛选器字段
+        public bool IsHidden { get; set; }
+        public bool IsEnvelope { get; set; }
+        public bool IsVirtual { get; set; }
+        public bool IsReadOnly { get; set; }
+        public bool IsInPdmVault { get; set; }
         public List<CockpitTreeNode> Children { get; set; } = new List<CockpitTreeNode>();
     }
 
@@ -4460,9 +5209,13 @@ namespace SwAgentAddin
         public string DocType { get; set; }
         public int Quantity { get; set; }
         public string FileSize { get; set; }
+        public bool IsInPdmVault { get; set; }
         // Dynamic custom properties
         public Dictionary<string, CockpitPropertyValue> Properties { get; set; }
             = new Dictionary<string, CockpitPropertyValue>(StringComparer.OrdinalIgnoreCase);
+        // Flat string map for reliable JSON binding in WebView
+        public Dictionary<string, string> ResolvedProperties { get; set; }
+            = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 
     public class CockpitPropertyValue
