@@ -3960,11 +3960,15 @@ namespace SwAgentAddin
                 string fp = row.FilePath ?? "";
                 if (string.IsNullOrWhiteSpace(fp) || fp == "不可用") continue;
 
-                string stateName;
-                if (!cache.TryGetValue(fp, out stateName))
+                // 与设计树 PDM 图标一致：仅 Vault 内文件查物料状态，本地文件跳过
+                string stateName = "";
+                if (row.IsInPdmVault)
                 {
-                    stateName = PdmCom.GetWorkflowStateName(fp) ?? "";
-                    cache[fp] = stateName;
+                    if (!cache.TryGetValue(fp, out stateName))
+                    {
+                        stateName = PdmCom.GetWorkflowStateName(fp) ?? "";
+                        cache[fp] = stateName;
+                    }
                 }
 
                 row.Properties[PdmWorkflowStatePropertyName] = new CockpitPropertyValue

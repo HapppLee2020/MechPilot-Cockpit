@@ -1,0 +1,2174 @@
+{
+  "schema_version": "mechpilot.attribute_rules.v1",
+  "generated_at": "2026-07-01T11:53:52Z",
+  "source": {
+    "manual": "PDT_Complete_Attribute_Specification.md",
+    "cache": "agg_cache.json"
+  },
+  "confidence_policy": {
+    "strong_min_total": 100,
+    "medium_min_total": 20,
+    "low_min_total": 1,
+    "reference_only": "total == 0"
+  },
+  "material_count": 72,
+  "materials": {
+    "6061-T6": {
+      "material": "6061-T6",
+      "sample_count": 6497,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 6266,
+          "ratio": 0.9644
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 99,
+          "ratio": 0.0152
+        },
+        {
+          "value": "212 钣金件",
+          "count": 60,
+          "ratio": 0.0092
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 5255,
+          "ratio": 0.8088
+        },
+        {
+          "value": "无",
+          "count": 348,
+          "ratio": 0.0536
+        },
+        {
+          "value": "本色阳极氧化",
+          "count": 263,
+          "ratio": 0.0405
+        },
+        {
+          "value": "表面喷砂120目，黑色阳极氧化",
+          "count": 167,
+          "ratio": 0.0257
+        },
+        {
+          "value": "表面喷砂120目，本色导电阳极氧化",
+          "count": 91,
+          "ratio": 0.014
+        }
+      ],
+      "recommended_surface_treatment": "表面喷砂120目，本色阳极氧化",
+      "allowed_surface_treatments": [
+        "表面喷砂120目，本色阳极氧化",
+        "无",
+        "本色阳极氧化",
+        "表面喷砂120目，黑色阳极氧化",
+        "表面喷砂120目，本色导电阳极氧化"
+      ],
+      "spec_fill_rate": 0.0269,
+      "brand_fill_rate": 0.0209
+    },
+    "SUS304": {
+      "material": "SUS304",
+      "sample_count": 2943,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "212 钣金件",
+          "count": 1504,
+          "ratio": 0.511
+        },
+        {
+          "value": "211 机加件",
+          "count": 1353,
+          "ratio": 0.4597
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 64,
+          "ratio": 0.0217
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 1302,
+          "ratio": 0.4424
+        },
+        {
+          "value": "表面钝化",
+          "count": 979,
+          "ratio": 0.3327
+        },
+        {
+          "value": "表面拉丝",
+          "count": 362,
+          "ratio": 0.123
+        },
+        {
+          "value": "表面光滑",
+          "count": 55,
+          "ratio": 0.0187
+        },
+        {
+          "value": "表面喷涂，参考色板K9333",
+          "count": 37,
+          "ratio": 0.0126
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "表面钝化",
+        "表面拉丝",
+        "表面光滑",
+        "表面喷涂，参考色板K9333"
+      ],
+      "spec_fill_rate": 0.0289,
+      "brand_fill_rate": 0.0234
+    },
+    "5052": {
+      "material": "5052",
+      "sample_count": 1629,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "212 钣金件",
+          "count": 1578,
+          "ratio": 0.9687
+        },
+        {
+          "value": "211 机加件",
+          "count": 46,
+          "ratio": 0.0282
+        },
+        {
+          "value": "202 组件委外",
+          "count": 3,
+          "ratio": 0.0018
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 997,
+          "ratio": 0.612
+        },
+        {
+          "value": "表面喷涂，参考色板K9333",
+          "count": 262,
+          "ratio": 0.1608
+        },
+        {
+          "value": "表面喷涂、参考色卡K9333",
+          "count": 69,
+          "ratio": 0.0424
+        },
+        {
+          "value": "表面喷涂、参考色板K9333",
+          "count": 68,
+          "ratio": 0.0417
+        },
+        {
+          "value": "表面喷涂、医疗白",
+          "count": 67,
+          "ratio": 0.0411
+        }
+      ],
+      "recommended_surface_treatment": "表面喷砂120目，本色阳极氧化",
+      "allowed_surface_treatments": [
+        "表面喷砂120目，本色阳极氧化",
+        "表面喷涂，参考色板K9333",
+        "表面喷涂、参考色卡K9333",
+        "表面喷涂、参考色板K9333",
+        "表面喷涂、医疗白"
+      ],
+      "spec_fill_rate": 0.0092,
+      "brand_fill_rate": 0.0018
+    },
+    "SPCC": {
+      "material": "SPCC",
+      "sample_count": 603,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "212 钣金件",
+          "count": 585,
+          "ratio": 0.9701
+        },
+        {
+          "value": "211 机加件",
+          "count": 17,
+          "ratio": 0.0282
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 1,
+          "ratio": 0.0017
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面喷涂、医疗白",
+          "count": 383,
+          "ratio": 0.6352
+        },
+        {
+          "value": "表面喷涂、参考色板K9333",
+          "count": 60,
+          "ratio": 0.0995
+        },
+        {
+          "value": "表面喷涂，参考色板K9333",
+          "count": 31,
+          "ratio": 0.0514
+        },
+        {
+          "value": "表面镀白锌",
+          "count": 30,
+          "ratio": 0.0498
+        },
+        {
+          "value": "表面喷涂、参考色卡K9333",
+          "count": 24,
+          "ratio": 0.0398
+        }
+      ],
+      "recommended_surface_treatment": "表面喷涂、医疗白",
+      "allowed_surface_treatments": [
+        "表面喷涂、医疗白",
+        "表面喷涂、参考色板K9333",
+        "表面喷涂，参考色板K9333",
+        "表面镀白锌",
+        "表面喷涂、参考色卡K9333"
+      ],
+      "spec_fill_rate": 0.0033,
+      "brand_fill_rate": 0.0017
+    },
+    "PPS（本色）": {
+      "material": "PPS（本色）",
+      "sample_count": 434,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 426,
+          "ratio": 0.9816
+        },
+        {
+          "value": "212 钣金件",
+          "count": 3,
+          "ratio": 0.0069
+        },
+        {
+          "value": "201 自制半成品",
+          "count": 2,
+          "ratio": 0.0046
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 406,
+          "ratio": 0.9355
+        },
+        {
+          "value": "/",
+          "count": 14,
+          "ratio": 0.0323
+        },
+        {
+          "value": "导电PPS",
+          "count": 7,
+          "ratio": 0.0161
+        },
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 6,
+          "ratio": 0.0138
+        },
+        {
+          "value": "表面喷砂120目，黑色阳极氧化",
+          "count": 1,
+          "ratio": 0.0023
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "/",
+        "导电PPS",
+        "表面喷砂120目，本色阳极氧化",
+        "表面喷砂120目，黑色阳极氧化"
+      ],
+      "spec_fill_rate": 0.0023,
+      "brand_fill_rate": 0.0
+    },
+    "6063-T5": {
+      "material": "6063-T5",
+      "sample_count": 236,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 209,
+          "ratio": 0.8856
+        },
+        {
+          "value": "202 组件委外",
+          "count": 15,
+          "ratio": 0.0636
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 7,
+          "ratio": 0.0297
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 99,
+          "ratio": 0.4195
+        },
+        {
+          "value": "无",
+          "count": 78,
+          "ratio": 0.3305
+        },
+        {
+          "value": "本色阳极氧化",
+          "count": 38,
+          "ratio": 0.161
+        },
+        {
+          "value": "表面喷砂120目，本色导电阳极氧化",
+          "count": 4,
+          "ratio": 0.0169
+        },
+        {
+          "value": "喷砂氧化",
+          "count": 4,
+          "ratio": 0.0169
+        }
+      ],
+      "recommended_surface_treatment": "表面喷砂120目，本色阳极氧化",
+      "allowed_surface_treatments": [
+        "表面喷砂120目，本色阳极氧化",
+        "无",
+        "本色阳极氧化",
+        "表面喷砂120目，本色导电阳极氧化",
+        "喷砂氧化"
+      ],
+      "spec_fill_rate": 0.0636,
+      "brand_fill_rate": 0.0297
+    },
+    "PPS（黑色）": {
+      "material": "PPS（黑色）",
+      "sample_count": 142,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 137,
+          "ratio": 0.9648
+        },
+        {
+          "value": "201 自制半成品",
+          "count": 2,
+          "ratio": 0.0141
+        },
+        {
+          "value": "202 组件委外",
+          "count": 1,
+          "ratio": 0.007
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 123,
+          "ratio": 0.8662
+        },
+        {
+          "value": "/",
+          "count": 13,
+          "ratio": 0.0915
+        },
+        {
+          "value": "导电PPS",
+          "count": 5,
+          "ratio": 0.0352
+        },
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 1,
+          "ratio": 0.007
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "/",
+        "导电PPS",
+        "表面喷砂120目，本色阳极氧化"
+      ],
+      "spec_fill_rate": 0.007,
+      "brand_fill_rate": 0.0
+    },
+    "PTFE": {
+      "material": "PTFE",
+      "sample_count": 121,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 120,
+          "ratio": 0.9917
+        },
+        {
+          "value": "202 组件委外",
+          "count": 1,
+          "ratio": 0.0083
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 117,
+          "ratio": 0.9669
+        },
+        {
+          "value": "表面钝化",
+          "count": 1,
+          "ratio": 0.0083
+        },
+        {
+          "value": "表面光滑",
+          "count": 1,
+          "ratio": 0.0083
+        },
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 1,
+          "ratio": 0.0083
+        },
+        {
+          "value": "/",
+          "count": 1,
+          "ratio": 0.0083
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "表面钝化",
+        "表面光滑",
+        "表面喷砂120目，本色阳极氧化",
+        "/"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "PPS（白色）": {
+      "material": "PPS（白色）",
+      "sample_count": 113,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 108,
+          "ratio": 0.9558
+        },
+        {
+          "value": "201 自制半成品",
+          "count": 2,
+          "ratio": 0.0177
+        },
+        {
+          "value": "202 组件委外",
+          "count": 1,
+          "ratio": 0.0088
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 99,
+          "ratio": 0.8761
+        },
+        {
+          "value": "/",
+          "count": 13,
+          "ratio": 0.115
+        },
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 1,
+          "ratio": 0.0088
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "/",
+        "表面喷砂120目，本色阳极氧化"
+      ],
+      "spec_fill_rate": 0.0088,
+      "brand_fill_rate": 0.0
+    },
+    "PU": {
+      "material": "PU",
+      "sample_count": 104,
+      "confidence": "strong",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 103,
+          "ratio": 0.9904
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 1,
+          "ratio": 0.0096
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 99,
+          "ratio": 0.9519
+        },
+        {
+          "value": "/",
+          "count": 2,
+          "ratio": 0.0192
+        },
+        {
+          "value": "绿色透明、硬度A80",
+          "count": 2,
+          "ratio": 0.0192
+        },
+        {
+          "value": "绿色透明、邵氏硬度80",
+          "count": 1,
+          "ratio": 0.0096
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "/",
+        "绿色透明、硬度A80",
+        "绿色透明、邵氏硬度80"
+      ],
+      "spec_fill_rate": 0.0192,
+      "brand_fill_rate": 0.0096
+    },
+    "ABS（白色）": {
+      "material": "ABS（白色）",
+      "sample_count": 80,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 69,
+          "ratio": 0.8625
+        },
+        {
+          "value": "201 自制半成品",
+          "count": 6,
+          "ratio": 0.075
+        },
+        {
+          "value": "202 组件委外",
+          "count": 2,
+          "ratio": 0.025
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 63,
+          "ratio": 0.7875
+        },
+        {
+          "value": "表面喷涂、医疗白",
+          "count": 5,
+          "ratio": 0.0625
+        },
+        {
+          "value": "/",
+          "count": 3,
+          "ratio": 0.0375
+        },
+        {
+          "value": "表面光滑",
+          "count": 2,
+          "ratio": 0.025
+        },
+        {
+          "value": "喷漆（与铝合金喷砂阳机氧化颜色一致）",
+          "count": 2,
+          "ratio": 0.025
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "表面喷涂、医疗白",
+        "/",
+        "表面光滑",
+        "喷漆（与铝合金喷砂阳机氧化颜色一致）"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "POM（黑色）": {
+      "material": "POM（黑色）",
+      "sample_count": 77,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 77,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 68,
+          "ratio": 0.8831
+        },
+        {
+          "value": "表面光滑",
+          "count": 6,
+          "ratio": 0.0779
+        },
+        {
+          "value": "表面喷涂、参考色板K9333",
+          "count": 1,
+          "ratio": 0.013
+        },
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 1,
+          "ratio": 0.013
+        },
+        {
+          "value": "/",
+          "count": 1,
+          "ratio": 0.013
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "表面光滑",
+        "表面喷涂、参考色板K9333",
+        "表面喷砂120目，本色阳极氧化",
+        "/"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "POM（白色）": {
+      "material": "POM（白色）",
+      "sample_count": 77,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 75,
+          "ratio": 0.974
+        },
+        {
+          "value": "214 塑胶件",
+          "count": 2,
+          "ratio": 0.026
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 76,
+          "ratio": 0.987
+        },
+        {
+          "value": "/",
+          "count": 1,
+          "ratio": 0.013
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "/"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "45#": {
+      "material": "45#",
+      "sample_count": 74,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 72,
+          "ratio": 0.973
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 2,
+          "ratio": 0.027
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面镀镍",
+          "count": 15,
+          "ratio": 0.2027
+        },
+        {
+          "value": "表面镀硬铬（膜厚20μm）",
+          "count": 6,
+          "ratio": 0.0811
+        },
+        {
+          "value": "无电解镀镍",
+          "count": 5,
+          "ratio": 0.0676
+        },
+        {
+          "value": "表面镀硬铬(膜厚20μm)",
+          "count": 5,
+          "ratio": 0.0676
+        },
+        {
+          "value": "镀硬铬",
+          "count": 4,
+          "ratio": 0.0541
+        }
+      ],
+      "recommended_surface_treatment": "表面镀镍",
+      "allowed_surface_treatments": [
+        "表面镀镍",
+        "表面镀硬铬（膜厚20μm）",
+        "无电解镀镍",
+        "表面镀硬铬(膜厚20μm)",
+        "镀硬铬"
+      ],
+      "spec_fill_rate": 0.027,
+      "brand_fill_rate": 0.027
+    },
+    "SUS303": {
+      "material": "SUS303",
+      "sample_count": 73,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 59,
+          "ratio": 0.8082
+        },
+        {
+          "value": "212 钣金件",
+          "count": 11,
+          "ratio": 0.1507
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 3,
+          "ratio": 0.0411
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 50,
+          "ratio": 0.6849
+        },
+        {
+          "value": "表面钝化",
+          "count": 22,
+          "ratio": 0.3014
+        },
+        {
+          "value": "表面拉丝",
+          "count": 1,
+          "ratio": 0.0137
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "表面钝化",
+        "表面拉丝"
+      ],
+      "spec_fill_rate": 0.1507,
+      "brand_fill_rate": 0.0548
+    },
+    "ABS（黑色）": {
+      "material": "ABS（黑色）",
+      "sample_count": 51,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 39,
+          "ratio": 0.7647
+        },
+        {
+          "value": "201 自制半成品",
+          "count": 6,
+          "ratio": 0.1176
+        },
+        {
+          "value": "212 钣金件",
+          "count": 3,
+          "ratio": 0.0588
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 34,
+          "ratio": 0.6667
+        },
+        {
+          "value": "表面喷涂、医疗白",
+          "count": 5,
+          "ratio": 0.098
+        },
+        {
+          "value": "表面光滑",
+          "count": 4,
+          "ratio": 0.0784
+        },
+        {
+          "value": "/",
+          "count": 3,
+          "ratio": 0.0588
+        },
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 2,
+          "ratio": 0.0392
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "表面喷涂、医疗白",
+        "表面光滑",
+        "/",
+        "表面喷砂120目，本色阳极氧化"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "Q235-A": {
+      "material": "Q235-A",
+      "sample_count": 45,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "212 钣金件",
+          "count": 31,
+          "ratio": 0.6889
+        },
+        {
+          "value": "211 机加件",
+          "count": 12,
+          "ratio": 0.2667
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 2,
+          "ratio": 0.0444
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面喷涂、医疗白",
+          "count": 27,
+          "ratio": 0.6
+        },
+        {
+          "value": "表面喷涂，参考色板K9333",
+          "count": 9,
+          "ratio": 0.2
+        },
+        {
+          "value": "表面喷涂、参考色板K9333",
+          "count": 3,
+          "ratio": 0.0667
+        },
+        {
+          "value": "详见技术要求",
+          "count": 2,
+          "ratio": 0.0444
+        },
+        {
+          "value": "表面喷涂、参考色板RAL5010",
+          "count": 1,
+          "ratio": 0.0222
+        }
+      ],
+      "recommended_surface_treatment": "表面喷涂、医疗白",
+      "allowed_surface_treatments": [
+        "表面喷涂、医疗白",
+        "表面喷涂，参考色板K9333",
+        "表面喷涂、参考色板K9333",
+        "详见技术要求",
+        "表面喷涂、参考色板RAL5010"
+      ],
+      "spec_fill_rate": 0.0444,
+      "brand_fill_rate": 0.0444
+    },
+    "PEEK": {
+      "material": "PEEK",
+      "sample_count": 44,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 44,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 44,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0455
+    },
+    "SECC": {
+      "material": "SECC",
+      "sample_count": 30,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "212 钣金件",
+          "count": 30,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 18,
+          "ratio": 0.6
+        },
+        {
+          "value": "表面镀白锌",
+          "count": 10,
+          "ratio": 0.3333
+        },
+        {
+          "value": "表面镀彩锌",
+          "count": 2,
+          "ratio": 0.0667
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "表面镀白锌",
+        "表面镀彩锌"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "SUS440C": {
+      "material": "SUS440C",
+      "sample_count": 25,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 21,
+          "ratio": 0.84
+        },
+        {
+          "value": "212 钣金件",
+          "count": 3,
+          "ratio": 0.12
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 1,
+          "ratio": 0.04
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面热处理，HRC（56-58）",
+          "count": 6,
+          "ratio": 0.24
+        },
+        {
+          "value": "无",
+          "count": 5,
+          "ratio": 0.2
+        },
+        {
+          "value": "淬火 + 中温回火（HRC 55-58）",
+          "count": 2,
+          "ratio": 0.08
+        },
+        {
+          "value": "表面钝化",
+          "count": 2,
+          "ratio": 0.08
+        },
+        {
+          "value": "表面镀硬铬，热处理，HRC（>58）",
+          "count": 2,
+          "ratio": 0.08
+        }
+      ],
+      "recommended_surface_treatment": "表面热处理，HRC（56-58）",
+      "allowed_surface_treatments": [
+        "表面热处理，HRC（56-58）",
+        "无",
+        "淬火 + 中温回火（HRC 55-58）",
+        "表面钝化",
+        "表面镀硬铬，热处理，HRC（>58）"
+      ],
+      "spec_fill_rate": 0.28,
+      "brand_fill_rate": 0.04
+    },
+    "S136H": {
+      "material": "S136H",
+      "sample_count": 25,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 25,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 18,
+          "ratio": 0.72
+        },
+        {
+          "value": "镀DLC涂层",
+          "count": 3,
+          "ratio": 0.12
+        },
+        {
+          "value": "发黑",
+          "count": 1,
+          "ratio": 0.04
+        },
+        {
+          "value": "淬火+低温回火，HRC48-52",
+          "count": 1,
+          "ratio": 0.04
+        },
+        {
+          "value": "化学发黑",
+          "count": 1,
+          "ratio": 0.04
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "镀DLC涂层",
+        "发黑",
+        "淬火+低温回火，HRC48-52",
+        "化学发黑"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "SKD11": {
+      "material": "SKD11",
+      "sample_count": 24,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 24,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面镀铬",
+          "count": 12,
+          "ratio": 0.5
+        },
+        {
+          "value": "表面镀硬铬",
+          "count": 4,
+          "ratio": 0.1667
+        },
+        {
+          "value": "表面光滑",
+          "count": 3,
+          "ratio": 0.125
+        },
+        {
+          "value": "表面镀铬，淬火+回火，HRC≥56",
+          "count": 1,
+          "ratio": 0.0417
+        },
+        {
+          "value": "表面镀铬，HRC（55-58）",
+          "count": 1,
+          "ratio": 0.0417
+        }
+      ],
+      "recommended_surface_treatment": "表面镀铬",
+      "allowed_surface_treatments": [
+        "表面镀铬",
+        "表面镀硬铬",
+        "表面光滑",
+        "表面镀铬，淬火+回火，HRC≥56",
+        "表面镀铬，HRC（55-58）"
+      ],
+      "spec_fill_rate": 0.0417,
+      "brand_fill_rate": 0.0
+    },
+    "7075-T6": {
+      "material": "7075-T6",
+      "sample_count": 22,
+      "confidence": "medium",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 21,
+          "ratio": 0.9545
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 1,
+          "ratio": 0.0455
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面喷砂120目，本色阳极氧化",
+          "count": 10,
+          "ratio": 0.4545
+        },
+        {
+          "value": "硬质阳极氧化",
+          "count": 5,
+          "ratio": 0.2273
+        },
+        {
+          "value": "本色阳极氧化",
+          "count": 4,
+          "ratio": 0.1818
+        },
+        {
+          "value": "表面喷砂120目，黑色阳极氧化",
+          "count": 1,
+          "ratio": 0.0455
+        },
+        {
+          "value": "无",
+          "count": 1,
+          "ratio": 0.0455
+        }
+      ],
+      "recommended_surface_treatment": "表面喷砂120目，本色阳极氧化",
+      "allowed_surface_treatments": [
+        "表面喷砂120目，本色阳极氧化",
+        "硬质阳极氧化",
+        "本色阳极氧化",
+        "表面喷砂120目，黑色阳极氧化",
+        "无"
+      ],
+      "spec_fill_rate": 0.0455,
+      "brand_fill_rate": 0.0455
+    },
+    "SUS316": {
+      "material": "SUS316",
+      "sample_count": 16,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 15,
+          "ratio": 0.9375
+        },
+        {
+          "value": "212 钣金件",
+          "count": 1,
+          "ratio": 0.0625
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面钝化",
+          "count": 9,
+          "ratio": 0.5625
+        },
+        {
+          "value": "无",
+          "count": 6,
+          "ratio": 0.375
+        },
+        {
+          "value": "镀DLC",
+          "count": 1,
+          "ratio": 0.0625
+        }
+      ],
+      "recommended_surface_treatment": "表面钝化",
+      "allowed_surface_treatments": [
+        "表面钝化",
+        "无",
+        "镀DLC"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "S136": {
+      "material": "S136",
+      "sample_count": 16,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 15,
+          "ratio": 0.9375
+        },
+        {
+          "value": "202 组件委外",
+          "count": 1,
+          "ratio": 0.0625
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "淬火HRC48-52",
+          "count": 5,
+          "ratio": 0.3125
+        },
+        {
+          "value": "表面热处理，HRC（48-52）",
+          "count": 4,
+          "ratio": 0.25
+        },
+        {
+          "value": "淬火HRC48-52+包胶",
+          "count": 3,
+          "ratio": 0.1875
+        },
+        {
+          "value": "无",
+          "count": 2,
+          "ratio": 0.125
+        },
+        {
+          "value": "疏水涂层",
+          "count": 1,
+          "ratio": 0.0625
+        }
+      ],
+      "recommended_surface_treatment": "淬火HRC48-52",
+      "allowed_surface_treatments": [
+        "淬火HRC48-52",
+        "表面热处理，HRC（48-52）",
+        "淬火HRC48-52+包胶",
+        "无",
+        "疏水涂层"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "PFA": {
+      "material": "PFA",
+      "sample_count": 13,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 13,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 13,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.3077
+    },
+    "EPE泡棉": {
+      "material": "EPE泡棉",
+      "sample_count": 13,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "206 包装材料",
+          "count": 13,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 13,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "PC": {
+      "material": "PC",
+      "sample_count": 10,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 9,
+          "ratio": 0.9
+        },
+        {
+          "value": "212 钣金件",
+          "count": 1,
+          "ratio": 0.1
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 9,
+          "ratio": 0.9
+        },
+        {
+          "value": "/",
+          "count": 1,
+          "ratio": 0.1
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "/"
+      ],
+      "spec_fill_rate": 0.1,
+      "brand_fill_rate": 0.0
+    },
+    "SGCC": {
+      "material": "SGCC",
+      "sample_count": 9,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "212 钣金件",
+          "count": 9,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 9,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "PP": {
+      "material": "PP",
+      "sample_count": 8,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 6,
+          "ratio": 0.75
+        },
+        {
+          "value": "321 电气部件",
+          "count": 2,
+          "ratio": 0.25
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 8,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.25,
+      "brand_fill_rate": 0.25
+    },
+    "40Cr": {
+      "material": "40Cr",
+      "sample_count": 7,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 7,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "调质处理，表面镀硬铬",
+          "count": 3,
+          "ratio": 0.4286
+        },
+        {
+          "value": "表面镀镍",
+          "count": 1,
+          "ratio": 0.1429
+        },
+        {
+          "value": "调质处理，HRC28-32",
+          "count": 1,
+          "ratio": 0.1429
+        },
+        {
+          "value": "调质处理，表面度硬铬",
+          "count": 1,
+          "ratio": 0.1429
+        },
+        {
+          "value": "表面镀铬",
+          "count": 1,
+          "ratio": 0.1429
+        }
+      ],
+      "recommended_surface_treatment": "调质处理，表面镀硬铬",
+      "allowed_surface_treatments": [
+        "调质处理，表面镀硬铬",
+        "表面镀镍",
+        "调质处理，HRC28-32",
+        "调质处理，表面度硬铬",
+        "表面镀铬"
+      ],
+      "spec_fill_rate": 0.1429,
+      "brand_fill_rate": 0.0
+    },
+    "PMMA(透明）": {
+      "material": "PMMA(透明）",
+      "sample_count": 7,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 7,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 7,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "橡胶(NR)": {
+      "material": "橡胶(NR)",
+      "sample_count": 6,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 4,
+          "ratio": 0.6667
+        },
+        {
+          "value": "214 塑胶件",
+          "count": 1,
+          "ratio": 0.1667
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 1,
+          "ratio": 0.1667
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 6,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.1667,
+      "brand_fill_rate": 0.1667
+    },
+    "合成石": {
+      "material": "合成石",
+      "sample_count": 5,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 4,
+          "ratio": 0.8
+        },
+        {
+          "value": "202 组件委外",
+          "count": 1,
+          "ratio": 0.2
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 5,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "P20": {
+      "material": "P20",
+      "sample_count": 4,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 4,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面镀铬",
+          "count": 4,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "表面镀铬",
+      "allowed_surface_treatments": [
+        "表面镀铬"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "SUS301": {
+      "material": "SUS301",
+      "sample_count": 3,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "212 钣金件",
+          "count": 3,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 2,
+          "ratio": 0.6667
+        },
+        {
+          "value": "表面钝化",
+          "count": 1,
+          "ratio": 0.3333
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无",
+        "表面钝化"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "DC53": {
+      "material": "DC53",
+      "sample_count": 3,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 3,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "表面镀镍",
+          "count": 2,
+          "ratio": 0.6667
+        },
+        {
+          "value": "表面镀铬",
+          "count": 1,
+          "ratio": 0.3333
+        }
+      ],
+      "recommended_surface_treatment": "表面镀镍",
+      "allowed_surface_treatments": [
+        "表面镀镍",
+        "表面镀铬"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "QAl9-4 铝青铜": {
+      "material": "QAl9-4 铝青铜",
+      "sample_count": 3,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 3,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "/",
+          "count": 3,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "/",
+      "allowed_surface_treatments": [
+        "/"
+      ],
+      "spec_fill_rate": 0.6667,
+      "brand_fill_rate": 0.0
+    },
+    "FKM(黑色)": {
+      "material": "FKM(黑色)",
+      "sample_count": 2,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 1,
+          "ratio": 0.5
+        },
+        {
+          "value": "204 机械标准件",
+          "count": 1,
+          "ratio": 0.5
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 1,
+          "ratio": 0.5
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.5,
+      "brand_fill_rate": 0.5
+    },
+    "4Cr13": {
+      "material": "4Cr13",
+      "sample_count": 1,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "TA1": {
+      "material": "TA1",
+      "sample_count": 1,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 1.0
+    },
+    "EVA泡棉": {
+      "material": "EVA泡棉",
+      "sample_count": 1,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "206 包装材料",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "PA12-CF": {
+      "material": "PA12-CF",
+      "sample_count": 1,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "镍": {
+      "material": "镍",
+      "sample_count": 1,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "石墨": {
+      "material": "石墨",
+      "sample_count": 1,
+      "confidence": "low",
+      "primary_categories": [
+        {
+          "value": "211 机加件",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "surface_treatments": [
+        {
+          "value": "无",
+          "count": 1,
+          "ratio": 1.0
+        }
+      ],
+      "recommended_surface_treatment": "无",
+      "allowed_surface_treatments": [
+        "无"
+      ],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "SUS310S": {
+      "material": "SUS310S",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "SUS321": {
+      "material": "SUS321",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "SUS410": {
+      "material": "SUS410",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "5083-H112": {
+      "material": "5083-H112",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "Q215": {
+      "material": "Q215",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "Cr12": {
+      "material": "Cr12",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "H13": {
+      "material": "H13",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "SPHC": {
+      "material": "SPHC",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "T2 紫铜": {
+      "material": "T2 紫铜",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "H62 黄铜": {
+      "material": "H62 黄铜",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "H59 铅黄铜": {
+      "material": "H59 铅黄铜",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "QBe2 铍青铜": {
+      "material": "QBe2 铍青铜",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "TA2": {
+      "material": "TA2",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "TC4": {
+      "material": "TC4",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "TA9": {
+      "material": "TA9",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "TA10": {
+      "material": "TA10",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "PA66": {
+      "material": "PA66",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "防静电PEEK（黑色）": {
+      "material": "防静电PEEK（黑色）",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "防静电PMMA(透明）": {
+      "material": "防静电PMMA(透明）",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "PVDF": {
+      "material": "PVDF",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "FFKM(黑色)": {
+      "material": "FFKM(黑色)",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "电木(黑色）": {
+      "material": "电木(黑色）",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "电木（红色）": {
+      "material": "电木（红色）",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "PVC": {
+      "material": "PVC",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "PLA": {
+      "material": "PLA",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "ASA": {
+      "material": "ASA",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    },
+    "TPU": {
+      "material": "TPU",
+      "sample_count": 0,
+      "confidence": "reference_only",
+      "primary_categories": [],
+      "surface_treatments": [],
+      "recommended_surface_treatment": "",
+      "allowed_surface_treatments": [],
+      "spec_fill_rate": 0.0,
+      "brand_fill_rate": 0.0
+    }
+  }
+}
